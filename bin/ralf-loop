@@ -1,4 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "ralf-loop: not implemented yet" >&2
-exit 1
+
+if [[ -z "${1:-}" ]]; then
+  echo "Usage: ralf-loop <max-iterations>" >&2
+  exit 1
+fi
+
+MAX="$1"
+
+# Locate ralf installation root — works both from the repo and when installed via Nix.
+# When installed via Nix, RALF_ROOT is injected by the flake before this script body.
+RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+# shellcheck source=../lib/sandbox.sh
+source "$RALF_ROOT/lib/sandbox.sh"
+# shellcheck source=../lib/guard.sh
+source "$RALF_ROOT/lib/guard.sh"
+
+PROMPT_FILE="$RALF_ROOT/prompts/ralf-issue.md"
+if [[ ! -f "$PROMPT_FILE" ]]; then
+  echo "ralf-loop: prompt file not found: $PROMPT_FILE" >&2
+  exit 1
+fi
+
+PROJECT_DIR="$(pwd)"
+
+build_prompt() {
+  cat "$PROMPT_FILE"
+  if [[ -f "$PROJECT_DIR/ralf-progress.txt" ]]; then
+    printf '\n\n---\n# Previous progress (ralf-progress.txt)\n\n'
+    cat "$PROJECT_DIR/ralf-progress.txt"
+  fi
+}
+
+for ((i=1; i<=MAX; i++)); do
+  echo "ralf-loop: iteration $i/$MAX"
+
+  result=$(sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" 2>&1) || true
+  echo "$result"
+
+  # External guard: fetch remote and check the most recent ralf branch for deleted test files.
+  git -C "$PROJECT_DIR" fetch origin --quiet 2>/dev/null || true
+  RALF_BRANCH=$(git -C "$PROJECT_DIR" branch -r --list "origin/ralf/issue-*" 2>/dev/null \
+    | sed 's|origin/||' | sort | tail -1 | xargs || true)
+
+  if [[ -n "$RALF_BRANCH" ]]; then
+    if ! guard_test_deletion "$PROJECT_DIR" "main" 2>/dev/null; then
+      echo "ralf-loop: guard failed — test files deleted on branch $RALF_BRANCH" >&2
+      ISSUE_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
+      if [[ -n "$ISSUE_NUM" ]]; then
+        gh issue edit "$ISSUE_NUM" --add-label ralf-blocked --remove-label ralf 2>/dev/null || true
+        echo "ralf-loop: labelled issue #$ISSUE_NUM as ralf-blocked" >&2
+      fi
+      exit 1
+    fi
+  fi
+
+  if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
+    echo "ralf-loop: all ralf issues complete after $i iteration(s)."
+    exit 0
+  fi
+done
+
+echo "ralf-loop: reached max iterations ($MAX) without COMPLETE signal."

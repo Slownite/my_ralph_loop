@@ -21,16 +21,26 @@
           pkgs.bash
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
 
+        ralfAssets = pkgs.runCommand "ralf-assets" {} ''
+          mkdir -p $out/share/ralf
+          cp -r ${./lib} $out/share/ralf/lib
+          cp -r ${./prompts} $out/share/ralf/prompts
+        '';
+
         ralf-loop = pkgs.writeShellApplication {
           name = "ralf-loop";
           runtimeInputs = runtimeDeps;
-          text = builtins.readFile ./bin/ralf-loop;
+          text = ''
+            RALF_ROOT="${ralfAssets}/share/ralf"
+          '' + builtins.readFile ./bin/ralf-loop;
         };
 
         ralf-once = pkgs.writeShellApplication {
           name = "ralf-once";
           runtimeInputs = runtimeDeps;
-          text = builtins.readFile ./bin/ralf-once;
+          text = ''
+            RALF_ROOT="${ralfAssets}/share/ralf"
+          '' + builtins.readFile ./bin/ralf-once;
         };
       in {
         packages = {
