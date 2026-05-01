@@ -115,6 +115,22 @@ On macOS, the sandbox is skipped (bubblewrap is Linux-only). The test-deletion g
 
 The test-deletion guard runs after every iteration. If Claude deleted test files net-negative on the feature branch, the loop stops and labels the issue `ralf-blocked`.
 
+### Claude Code permissions
+
+The repo ships `.claude/settings.json` with pre-authorized permission rules so the ralf agent never hits an interactive prompt for the commands it needs:
+
+| Rule | Covers |
+|------|--------|
+| `Bash(git worktree *)` | Worktree creation |
+| `Bash(git checkout *)` | Branch creation and switching |
+| `Bash(git push*)` | Pushing branches |
+| `Bash(git commit *)` | Committing changes |
+| `Bash(gh pr *)` | Opening and merging PRs |
+| `Bash(gh issue *)` | Editing issue labels |
+| `Bash(mypy *)` | Type checking |
+
+If you add a new tool or command to the TDD playbook that requires a permission, add a matching rule to `.claude/settings.json`.
+
 ## `ralf-progress.txt`
 
 After each issue, ralf appends a summary entry to `ralf-progress.txt` in your project root:
