@@ -10,12 +10,14 @@ sandbox_run() {
     bwrap \
       --bind "$worktree" /workspace \
       --ro-bind /nix/store /nix/store \
+      --ro-bind /run /run \
       --ro-bind "$HOME/.claude" "$HOME/.claude" \
       --ro-bind /etc /etc \
       --proc /proc \
       --dev /dev \
       --tmpfs /tmp \
       --setenv HOME "$HOME" \
+      --setenv PATH "/run/current-system/sw/bin:/run/wrappers/bin:$PATH" \
       --chdir /workspace \
       "$@"
   else
