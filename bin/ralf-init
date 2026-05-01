@@ -7,6 +7,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+if [[ -t 1 ]]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_GREEN=$'\033[32m'; C_CYAN=$'\033[36m'
+else
+  C_RESET= C_BOLD= C_GREEN= C_CYAN=
+fi
+
+echo "${C_BOLD}${C_CYAN}ralf-init:${C_RESET} creating ralf labels..."
 gh label create ralf        --color 0075ca --description "Picked up by ralf" --force
 gh label create ralf-done   --color 0e8a16 --description "Completed by ralf"  --force
 gh label create ralf-blocked --color e4e669 --description "Blocked, needs human" --force
+echo "${C_BOLD}${C_GREEN}ralf-init:${C_RESET} done."

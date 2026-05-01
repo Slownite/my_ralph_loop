@@ -23,9 +23,19 @@ source "$RALF_ROOT/lib/sandbox.sh"
 # shellcheck disable=SC1091
 source "$RALF_ROOT/lib/guard.sh"
 
+if [[ -t 1 ]]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
+  C_CYAN=$'\033[36m'
+else
+  C_RESET= C_BOLD= C_DIM= C_RED= C_GREEN= C_YELLOW= C_CYAN=
+fi
+LP="${C_BOLD}${C_CYAN}ralf-loop:${C_RESET}"
+LP_ERR="${C_BOLD}${C_RED}ralf-loop:${C_RESET}"
+
 PROMPT_FILE="$RALF_ROOT/prompts/ralf-issue.md"
 if [[ ! -f "$PROMPT_FILE" ]]; then
-  echo "ralf-loop: prompt file not found: $PROMPT_FILE" >&2
+  echo "$LP_ERR prompt file not found: $PROMPT_FILE" >&2
   exit 1
 fi
 
@@ -42,14 +52,14 @@ build_prompt() {
 }
 
 for ((i=1; i<=MAX; i++)); do
-  echo "ralf-loop: --- iteration $i/$MAX ---"
+  echo "$LP ${C_BOLD}--- iteration $i/$MAX ---${C_RESET}"
 
-  echo "ralf-loop: fetching oldest open ralf issue..."
+  echo "$LP fetching oldest open ralf issue..."
   ISSUE_JSON=$(gh issue list --label ralf --state open --json number,title,body \
     --jq 'sort_by(.number) | .[0]')
 
   if [[ -z "$ISSUE_JSON" || "$ISSUE_JSON" == "null" ]]; then
-    echo "ralf-loop: no open ralf issues found — all complete after $((i-1)) iteration(s)."
+    echo "$LP ${C_GREEN}no open ralf issues found — all complete after $((i-1)) iteration(s).${C_RESET}"
     echo "<promise>COMPLETE</promise>"
     exit 0
   fi
@@ -57,9 +67,9 @@ for ((i=1; i<=MAX; i++)); do
   ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
   ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
   ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
-  echo "ralf-loop: picked issue #$ISSUE_NUM — $ISSUE_TITLE"
+  echo "$LP picked issue ${C_YELLOW}#$ISSUE_NUM${C_RESET} — ${C_BOLD}$ISSUE_TITLE${C_RESET}"
 
-  echo "ralf-loop: launching claude in sandbox for issue #$ISSUE_NUM..."
+  echo "$LP launching claude in sandbox for issue ${C_YELLOW}#$ISSUE_NUM${C_RESET}..."
   _tmpout=$(mktemp)
   _ctxfile=$(mktemp)
   echo "0" > "$_ctxfile"
@@ -87,8 +97,15 @@ for ((i=1; i<=MAX; i++)); do
   _start=$SECONDS
   while kill -0 "$_pid" 2>/dev/null; do
     _pct=$(cat "$_ctxfile" 2>/dev/null || echo 0)
-    printf '\r  %s  issue #%s — %ds elapsed  ctx:%s%%' \
-      "${_spin:$(( _i % ${#_spin} )):1}" "$ISSUE_NUM" "$(( SECONDS - _start ))" "$_pct"
+    if (( _pct >= 80 )); then _ctx_color=$C_RED
+    elif (( _pct >= 50 )); then _ctx_color=$C_YELLOW
+    else _ctx_color=$C_GREEN
+    fi
+    printf '\r  %s%s%s  issue %s#%s%s — %ds elapsed  ctx:%s%s%%%s' \
+      "$C_CYAN" "${_spin:$(( _i % ${#_spin} )):1}" "$C_RESET" \
+      "$C_YELLOW" "$ISSUE_NUM" "$C_RESET" \
+      "$(( SECONDS - _start ))" \
+      "$_ctx_color" "$_pct" "$C_RESET"
     _i=$(( _i + 1 ))
     sleep 0.1
   done
@@ -98,29 +115,29 @@ for ((i=1; i<=MAX; i++)); do
   jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text") | .text' \
     "$_tmpout" 2>/dev/null || cat "$_tmpout"
   rm -f "$_tmpout" "$_ctxfile"
-  echo "ralf-loop: claude finished for issue #$ISSUE_NUM ($(( SECONDS - _start ))s)"
+  echo "$LP ${C_GREEN}claude finished${C_RESET} for issue ${C_YELLOW}#$ISSUE_NUM${C_RESET} ${C_DIM}($(( SECONDS - _start ))s)${C_RESET}"
 
   # External guard: fetch remote and check the most recent ralf branch for deleted test files.
-  echo "ralf-loop: fetching remote to check guard..."
+  echo "$LP fetching remote to check guard..."
   git -C "$PROJECT_DIR" fetch origin --quiet 2>/dev/null || true
   RALF_BRANCH=$(git -C "$PROJECT_DIR" branch -r --list "origin/ralf/issue-*" 2>/dev/null \
     | sed 's|origin/||' | sort | tail -1 | xargs || true)
 
   if [[ -n "$RALF_BRANCH" ]]; then
-    echo "ralf-loop: running guard on branch $RALF_BRANCH..."
+    echo "$LP running guard on branch ${C_BOLD}$RALF_BRANCH${C_RESET}..."
     if ! guard_test_deletion "$PROJECT_DIR" "main" 2>/dev/null; then
-      echo "ralf-loop: guard failed — test files deleted on branch $RALF_BRANCH" >&2
+      echo "$LP_ERR ${C_RED}guard failed${C_RESET} — test files deleted on branch $RALF_BRANCH" >&2
       BLOCKED_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
       if [[ -n "$BLOCKED_NUM" ]]; then
         gh issue edit "$BLOCKED_NUM" --add-label ralf-blocked --remove-label ralf 2>/dev/null || true
-        echo "ralf-loop: labelled issue #$BLOCKED_NUM as ralf-blocked" >&2
+        echo "$LP_ERR labelled issue ${C_YELLOW}#$BLOCKED_NUM${C_RESET} as ralf-blocked" >&2
       fi
       exit 1
     fi
-    echo "ralf-loop: guard passed for branch $RALF_BRANCH"
+    echo "$LP ${C_GREEN}guard passed${C_RESET} for branch $RALF_BRANCH"
   else
-    echo "ralf-loop: no ralf branch found on remote, skipping guard"
+    echo "$LP no ralf branch found on remote, skipping guard"
   fi
 done
 
-echo "ralf-loop: reached max iterations ($MAX) without completing all issues."
+echo "$LP ${C_YELLOW}reached max iterations ($MAX)${C_RESET} without completing all issues."

@@ -11,19 +11,29 @@ fi
 # RALF_ROOT is injected by the Nix build, or resolved relative to this script for dev.
 RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+if [[ -t 1 ]]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
+  C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_CYAN=$'\033[36m'
+else
+  C_RESET= C_BOLD= C_RED= C_YELLOW= C_CYAN=
+fi
+LP="${C_BOLD}${C_CYAN}ralf-once:${C_RESET}"
+LP_ERR="${C_BOLD}${C_RED}ralf-once:${C_RESET}"
+
 PROMPT_FILE="$RALF_ROOT/prompts/ralf-issue.md"
 if [[ ! -f "$PROMPT_FILE" ]]; then
-  echo "ralf-once: prompt file not found: $PROMPT_FILE" >&2
+  echo "$LP_ERR prompt file not found: $PROMPT_FILE" >&2
   exit 1
 fi
 
 # Resolve issue number interactively if not provided.
 if [[ -z "${1:-}" ]]; then
-  echo "Open ralf issues:"
+  echo "${C_BOLD}Open ralf issues:${C_RESET}"
   gh issue list --label ralf --state open --json number,title \
     --jq '.[] | "  #\(.number)  \(.title)"'
   echo ""
-  read -rp "Issue number to work: " ISSUE_NUM
+  printf '%sIssue number to work:%s ' "$C_BOLD" "$C_RESET"
+  read -r ISSUE_NUM
 else
   ISSUE_NUM="$1"
 fi
@@ -31,6 +41,8 @@ fi
 ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body)
 ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+
+echo "$LP working issue ${C_YELLOW}#$ISSUE_NUM${C_RESET} — ${C_BOLD}$ISSUE_TITLE${C_RESET}"
 
 HITL_PREFIX="$(cat <<HITL
 # ralf-once — Human-in-the-loop mode
