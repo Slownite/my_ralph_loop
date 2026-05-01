@@ -61,7 +61,7 @@ for ((i=1; i<=MAX; i++)); do
 
   echo "ralf-loop: launching claude in sandbox for issue #$ISSUE_NUM..."
   _tmpout=$(mktemp)
-  sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" >"$_tmpout" 2>&1 &
+  sandbox_run "$PROJECT_DIR" claude --dangerously-skip-permissions -p "$(build_prompt)" >"$_tmpout" 2>&1 &
   _pid=$!
   _spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   _i=0
