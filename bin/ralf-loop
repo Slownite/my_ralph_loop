@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: ralf-loop <max-iterations>"
-  echo "  Run up to <max-iterations> autonomous ralf cycles, one open issue per cycle."
-  exit 0
-fi
+MODEL="claude-sonnet-4-6"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      echo "Usage: ralf-loop [--model <model>] <max-iterations>"
+      echo "  Run up to <max-iterations> autonomous ralf cycles, one open issue per cycle."
+      echo "  --model  Claude model to use (default: claude-sonnet-4-6)"
+      exit 0
+      ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
 
 if [[ -z "${1:-}" ]]; then
-  echo "Usage: ralf-loop <max-iterations>" >&2
+  echo "Usage: ralf-loop [--model <model>] <max-iterations>" >&2
   exit 1
 fi
 
@@ -74,6 +84,7 @@ for ((i=1; i<=MAX; i++)); do
   _ctxfile=$(mktemp)
   echo "0" > "$_ctxfile"
   sandbox_run "$PROJECT_DIR" claude --dangerously-skip-permissions \
+    --model "$MODEL" \
     --output-format stream-json --verbose \
     -p "$(build_prompt)" >"$_tmpout" 2>&1 &
   _pid=$!

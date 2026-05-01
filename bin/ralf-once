@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: ralf-once [<issue-number>]"
-  echo "  Work on a single ralf-labelled GitHub issue with human-in-the-loop checkpoints."
-  echo "  If no issue number is given, lists open ralf issues and prompts interactively."
-  exit 0
-fi
+MODEL="claude-sonnet-4-6"
+ISSUE_NUM_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      echo "Usage: ralf-once [--model <model>] [<issue-number>]"
+      echo "  Work on a single ralf-labelled GitHub issue with human-in-the-loop checkpoints."
+      echo "  If no issue number is given, lists open ralf issues and prompts interactively."
+      echo "  --model  Claude model to use (default: claude-sonnet-4-6)"
+      exit 0
+      ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) ISSUE_NUM_ARG="$1"; shift ;;
+  esac
+done
 
 # RALF_ROOT is injected by the Nix build, or resolved relative to this script for dev.
 RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -27,7 +38,7 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
 fi
 
 # Resolve issue number interactively if not provided.
-if [[ -z "${1:-}" ]]; then
+if [[ -z "$ISSUE_NUM_ARG" ]]; then
   echo "${C_BOLD}Open ralf issues:${C_RESET}"
   gh issue list --label ralf --state open --json number,title \
     --jq '.[] | "  #\(.number)  \(.title)"'
@@ -35,7 +46,7 @@ if [[ -z "${1:-}" ]]; then
   printf '%sIssue number to work:%s ' "$C_BOLD" "$C_RESET"
   read -r ISSUE_NUM
 else
-  ISSUE_NUM="$1"
+  ISSUE_NUM="$ISSUE_NUM_ARG"
 fi
 
 ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body)
@@ -99,6 +110,6 @@ if [[ -f ralf-progress.txt ]]; then
   PROGRESS="$(printf '\n\n---\n# Previous progress (ralf-progress.txt)\n\n'; cat ralf-progress.txt)"
 fi
 
-exec claude "${HITL_PREFIX}
+exec claude --model "$MODEL" "${HITL_PREFIX}
 
 ${PLAYBOOK}${PROGRESS}"
