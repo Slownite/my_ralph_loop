@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs a command in a sandbox. On NixOS: bwrap isolation. On Mac: no-op (degraded).
+# Runs a command in a sandbox. On Linux+bwrap: full isolation. On Mac: degraded.
 # Usage: sandbox_run <worktree_path> <command...>
 
 sandbox_run() {
@@ -7,17 +7,21 @@ sandbox_run() {
   shift
 
   if [[ "$(uname)" == "Linux" ]] && command -v bwrap &>/dev/null; then
+    local mounts=()
+    for dir in /nix/store /usr /bin /lib /lib64 /run; do
+      [[ -d "$dir" ]] && mounts+=(--ro-bind "$dir" "$dir")
+    done
+
     bwrap \
       --bind "$worktree" /workspace \
-      --ro-bind /nix/store /nix/store \
-      --ro-bind /run /run \
+      "${mounts[@]}" \
       --ro-bind "$HOME/.claude" "$HOME/.claude" \
       --ro-bind /etc /etc \
       --proc /proc \
       --dev /dev \
       --tmpfs /tmp \
       --setenv HOME "$HOME" \
-      --setenv PATH "/run/current-system/sw/bin:/run/wrappers/bin:$PATH" \
+      --setenv PATH "$PATH" \
       --chdir /workspace \
       "$@"
   else
