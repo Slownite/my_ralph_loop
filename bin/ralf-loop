@@ -26,6 +26,8 @@ fi
 PROJECT_DIR="$(pwd)"
 
 build_prompt() {
+  printf '# Issue #%s: %s\n\n## Issue body\n\n%s\n\n---\n\n' \
+    "$ISSUE_NUM" "$ISSUE_TITLE" "$ISSUE_BODY"
   cat "$PROMPT_FILE"
   if [[ -f "$PROJECT_DIR/ralf-progress.txt" ]]; then
     printf '\n\n---\n# Previous progress (ralf-progress.txt)\n\n'
@@ -35,6 +37,19 @@ build_prompt() {
 
 for ((i=1; i<=MAX; i++)); do
   echo "ralf-loop: iteration $i/$MAX"
+
+  ISSUE_JSON=$(gh issue list --label ralf --state open --json number,title,body \
+    --jq 'sort_by(.number) | .[0]')
+
+  if [[ -z "$ISSUE_JSON" || "$ISSUE_JSON" == "null" ]]; then
+    echo "ralf-loop: all ralf issues complete after $((i-1)) iteration(s)."
+    echo "<promise>COMPLETE</promise>"
+    exit 0
+  fi
+
+  ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
+  ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+  ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
 
   result=$(sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" 2>&1) || true
   echo "$result"
@@ -47,19 +62,14 @@ for ((i=1; i<=MAX; i++)); do
   if [[ -n "$RALF_BRANCH" ]]; then
     if ! guard_test_deletion "$PROJECT_DIR" "main" 2>/dev/null; then
       echo "ralf-loop: guard failed — test files deleted on branch $RALF_BRANCH" >&2
-      ISSUE_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
-      if [[ -n "$ISSUE_NUM" ]]; then
-        gh issue edit "$ISSUE_NUM" --add-label ralf-blocked --remove-label ralf 2>/dev/null || true
-        echo "ralf-loop: labelled issue #$ISSUE_NUM as ralf-blocked" >&2
+      BLOCKED_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
+      if [[ -n "$BLOCKED_NUM" ]]; then
+        gh issue edit "$BLOCKED_NUM" --add-label ralf-blocked --remove-label ralf 2>/dev/null || true
+        echo "ralf-loop: labelled issue #$BLOCKED_NUM as ralf-blocked" >&2
       fi
       exit 1
     fi
   fi
-
-  if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
-    echo "ralf-loop: all ralf issues complete after $i iteration(s)."
-    exit 0
-  fi
 done
 
-echo "ralf-loop: reached max iterations ($MAX) without COMPLETE signal."
+echo "ralf-loop: reached max iterations ($MAX) without completing all issues."

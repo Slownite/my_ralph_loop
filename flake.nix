@@ -19,6 +19,7 @@
           pkgs.claude-code
           pkgs.git
           pkgs.bash
+          pkgs.jq
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
 
         ralfAssets = pkgs.runCommand "ralf-assets" {} ''
