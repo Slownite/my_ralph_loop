@@ -15,7 +15,7 @@ if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
   C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_CYAN=$'\033[36m'
 else
-  C_RESET= C_BOLD= C_RED= C_YELLOW= C_CYAN=
+  C_RESET=''; C_BOLD=''; C_RED=''; C_YELLOW=''; C_CYAN=''
 fi
 LP="${C_BOLD}${C_CYAN}ralf-once:${C_RESET}"
 LP_ERR="${C_BOLD}${C_RED}ralf-once:${C_RESET}"
