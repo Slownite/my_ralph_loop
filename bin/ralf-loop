@@ -60,9 +60,23 @@ for ((i=1; i<=MAX; i++)); do
   echo "ralf-loop: picked issue #$ISSUE_NUM — $ISSUE_TITLE"
 
   echo "ralf-loop: launching claude in sandbox for issue #$ISSUE_NUM..."
-  result=$(sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" 2>&1) || true
-  echo "$result"
-  echo "ralf-loop: claude finished for issue #$ISSUE_NUM"
+  _tmpout=$(mktemp)
+  sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" >"$_tmpout" 2>&1 &
+  _pid=$!
+  _spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  _i=0
+  _start=$SECONDS
+  while kill -0 "$_pid" 2>/dev/null; do
+    printf '\r  %s  issue #%s — %ds elapsed' \
+      "${_spin:$(( _i % ${#_spin} )):1}" "$ISSUE_NUM" "$(( SECONDS - _start ))"
+    _i=$(( _i + 1 ))
+    sleep 0.1
+  done
+  printf '\r\033[K'
+  wait "$_pid" || true
+  cat "$_tmpout"
+  rm -f "$_tmpout"
+  echo "ralf-loop: claude finished for issue #$ISSUE_NUM ($(( SECONDS - _start ))s)"
 
   # External guard: fetch remote and check the most recent ralf branch for deleted test files.
   echo "ralf-loop: fetching remote to check guard..."
