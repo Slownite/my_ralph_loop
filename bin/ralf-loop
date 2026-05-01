@@ -42,13 +42,14 @@ build_prompt() {
 }
 
 for ((i=1; i<=MAX; i++)); do
-  echo "ralf-loop: iteration $i/$MAX"
+  echo "ralf-loop: --- iteration $i/$MAX ---"
 
+  echo "ralf-loop: fetching oldest open ralf issue..."
   ISSUE_JSON=$(gh issue list --label ralf --state open --json number,title,body \
     --jq 'sort_by(.number) | .[0]')
 
   if [[ -z "$ISSUE_JSON" || "$ISSUE_JSON" == "null" ]]; then
-    echo "ralf-loop: all ralf issues complete after $((i-1)) iteration(s)."
+    echo "ralf-loop: no open ralf issues found — all complete after $((i-1)) iteration(s)."
     echo "<promise>COMPLETE</promise>"
     exit 0
   fi
@@ -56,16 +57,21 @@ for ((i=1; i<=MAX; i++)); do
   ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
   ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
   ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+  echo "ralf-loop: picked issue #$ISSUE_NUM — $ISSUE_TITLE"
 
+  echo "ralf-loop: launching claude in sandbox for issue #$ISSUE_NUM..."
   result=$(sandbox_run "$PROJECT_DIR" claude -p "$(build_prompt)" 2>&1) || true
   echo "$result"
+  echo "ralf-loop: claude finished for issue #$ISSUE_NUM"
 
   # External guard: fetch remote and check the most recent ralf branch for deleted test files.
+  echo "ralf-loop: fetching remote to check guard..."
   git -C "$PROJECT_DIR" fetch origin --quiet 2>/dev/null || true
   RALF_BRANCH=$(git -C "$PROJECT_DIR" branch -r --list "origin/ralf/issue-*" 2>/dev/null \
     | sed 's|origin/||' | sort | tail -1 | xargs || true)
 
   if [[ -n "$RALF_BRANCH" ]]; then
+    echo "ralf-loop: running guard on branch $RALF_BRANCH..."
     if ! guard_test_deletion "$PROJECT_DIR" "main" 2>/dev/null; then
       echo "ralf-loop: guard failed — test files deleted on branch $RALF_BRANCH" >&2
       BLOCKED_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
@@ -75,6 +81,9 @@ for ((i=1; i<=MAX; i++)); do
       fi
       exit 1
     fi
+    echo "ralf-loop: guard passed for branch $RALF_BRANCH"
+  else
+    echo "ralf-loop: no ralf branch found on remote, skipping guard"
   fi
 done
 
