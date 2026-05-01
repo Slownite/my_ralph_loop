@@ -43,17 +43,23 @@
             RALF_ROOT="${ralfAssets}/share/ralf"
           '' + builtins.readFile ./bin/ralf-once;
         };
+
+        ralf-init = pkgs.writeShellApplication {
+          name = "ralf-init";
+          runtimeInputs = runtimeDeps;
+          text = builtins.readFile ./bin/ralf-init;
+        };
       in {
         packages = {
-          inherit ralf-loop ralf-once;
+          inherit ralf-loop ralf-once ralf-init;
           default = pkgs.symlinkJoin {
             name = "ralf";
-            paths = [ ralf-loop ralf-once ];
+            paths = [ ralf-loop ralf-once ralf-init ];
           };
         };
 
         devShells.default = pkgs.mkShell {
-          packages = runtimeDeps ++ [ ralf-loop ralf-once ];
+          packages = runtimeDeps ++ [ ralf-loop ralf-once ralf-init ];
         };
       });
 }

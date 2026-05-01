@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  echo "Usage: ralf-init"
+  echo "  Clone labels from Slownite/voxy-linux into the current repository."
+  exit 0
+fi
+
+gh label clone Slownite/voxy-linux
