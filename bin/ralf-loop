@@ -12,9 +12,9 @@ MAX="$1"
 # When installed via Nix, RALF_ROOT is injected by the flake before this script body.
 RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-# shellcheck source=../lib/sandbox.sh
+# shellcheck disable=SC1091
 source "$RALF_ROOT/lib/sandbox.sh"
-# shellcheck source=../lib/guard.sh
+# shellcheck disable=SC1091
 source "$RALF_ROOT/lib/guard.sh"
 
 PROMPT_FILE="$RALF_ROOT/prompts/ralf-issue.md"
