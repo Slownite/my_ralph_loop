@@ -17,6 +17,7 @@ sandbox_run() {
       "${mounts[@]}" \
       --ro-bind "$HOME/.claude" "$HOME/.claude" \
       --ro-bind "$HOME/.config/gh" "$HOME/.config/gh" \
+      --ro-bind "$HOME/.ssh" "$HOME/.ssh" \
       --ro-bind /etc /etc \
       --proc /proc \
       --dev /dev \
