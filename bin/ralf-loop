@@ -61,21 +61,43 @@ for ((i=1; i<=MAX; i++)); do
 
   echo "ralf-loop: launching claude in sandbox for issue #$ISSUE_NUM..."
   _tmpout=$(mktemp)
-  sandbox_run "$PROJECT_DIR" claude --dangerously-skip-permissions -p "$(build_prompt)" >"$_tmpout" 2>&1 &
+  _ctxfile=$(mktemp)
+  echo "0" > "$_ctxfile"
+  sandbox_run "$PROJECT_DIR" claude --dangerously-skip-permissions \
+    --output-format stream-json \
+    -p "$(build_prompt)" >"$_tmpout" 2>&1 &
   _pid=$!
+  # Poll stream-json output every second to extract context window fill percentage.
+  # Context window for Claude Sonnet = 200 000 tokens.
+  (
+    while kill -0 "$_pid" 2>/dev/null; do
+      pct=$(jq -r '
+        select(.type == "assistant") |
+        ((.message.usage.input_tokens // 0)
+          + (.message.usage.cache_creation_input_tokens // 0)
+          + (.message.usage.cache_read_input_tokens // 0)) * 100 / 200000 | floor
+      ' "$_tmpout" 2>/dev/null | tail -1)
+      [[ -n "$pct" ]] && printf '%s' "$pct" > "$_ctxfile"
+      sleep 1
+    done
+  ) &
+  _ctx_pid=$!
   _spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   _i=0
   _start=$SECONDS
   while kill -0 "$_pid" 2>/dev/null; do
-    printf '\r  %s  issue #%s — %ds elapsed' \
-      "${_spin:$(( _i % ${#_spin} )):1}" "$ISSUE_NUM" "$(( SECONDS - _start ))"
+    _pct=$(cat "$_ctxfile" 2>/dev/null || echo 0)
+    printf '\r  %s  issue #%s — %ds elapsed  ctx:%s%%' \
+      "${_spin:$(( _i % ${#_spin} )):1}" "$ISSUE_NUM" "$(( SECONDS - _start ))" "$_pct"
     _i=$(( _i + 1 ))
     sleep 0.1
   done
   printf '\r\033[K'
+  kill "$_ctx_pid" 2>/dev/null || true
   wait "$_pid" || true
-  cat "$_tmpout"
-  rm -f "$_tmpout"
+  jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text") | .text' \
+    "$_tmpout" 2>/dev/null || cat "$_tmpout"
+  rm -f "$_tmpout" "$_ctxfile"
   echo "ralf-loop: claude finished for issue #$ISSUE_NUM ($(( SECONDS - _start ))s)"
 
   # External guard: fetch remote and check the most recent ralf branch for deleted test files.
