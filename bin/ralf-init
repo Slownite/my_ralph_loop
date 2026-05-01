@@ -7,4 +7,6 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-gh label clone Slownite/voxy-linux
+gh label create ralf        --color 0075ca --description "Picked up by ralf" --force
+gh label create ralf-done   --color 0e8a16 --description "Completed by ralf"  --force
+gh label create ralf-blocked --color e4e669 --description "Blocked, needs human" --force
