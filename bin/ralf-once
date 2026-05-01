@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  echo "Usage: ralf-once [<issue-number>]"
+  echo "  Work on a single ralf-labelled GitHub issue with human-in-the-loop checkpoints."
+  echo "  If no issue number is given, lists open ralf issues and prompts interactively."
+  exit 0
+fi
+
 # RALF_ROOT is injected by the Nix build, or resolved relative to this script for dev.
 RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 

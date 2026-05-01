@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  echo "Usage: ralf-loop <max-iterations>"
+  echo "  Run up to <max-iterations> autonomous ralf cycles, one open issue per cycle."
+  exit 0
+fi
+
 if [[ -z "${1:-}" ]]; then
   echo "Usage: ralf-loop <max-iterations>" >&2
   exit 1
