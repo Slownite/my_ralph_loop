@@ -1,4 +1,85 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "ralf-once: not implemented yet" >&2
-exit 1
+
+# RALF_ROOT is injected by the Nix build, or resolved relative to this script for dev.
+RALF_ROOT="${RALF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+PROMPT_FILE="$RALF_ROOT/prompts/ralf-issue.md"
+if [[ ! -f "$PROMPT_FILE" ]]; then
+  echo "ralf-once: prompt file not found: $PROMPT_FILE" >&2
+  exit 1
+fi
+
+# Resolve issue number interactively if not provided.
+if [[ -z "${1:-}" ]]; then
+  echo "Open ralf issues:"
+  gh issue list --label ralf --state open --json number,title \
+    --jq '.[] | "  #\(.number)  \(.title)"'
+  echo ""
+  read -rp "Issue number to work: " ISSUE_NUM
+else
+  ISSUE_NUM="$1"
+fi
+
+ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body)
+ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+
+HITL_PREFIX="$(cat <<HITL
+# ralf-once — Human-in-the-loop mode
+
+You are working on issue #${ISSUE_NUM}: ${ISSUE_TITLE}
+
+## Issue body
+
+${ISSUE_BODY}
+
+## HITL checkpoints — you MUST pause and wait for approval before proceeding
+
+**Checkpoint 1 — Plan**
+Before writing any code or tests, present:
+- Which acceptance criteria map to which test cases
+- Which modules/files you will create or modify
+- The branch name you will use (ralf/issue-${ISSUE_NUM}-<slug>)
+Then output:
+  [ralf-once] Checkpoint 1: Plan ready. Type 'approve' to continue or describe changes.
+Wait for the user to type 'approve' before proceeding.
+
+**Checkpoint 2 — RED**
+After writing the failing tests (before any implementation), show:
+- The test file(s) with all failing tests
+- The test runner output confirming they fail
+Then output:
+  [ralf-once] Checkpoint 2: Tests written (RED). Type 'approve' to continue or describe changes.
+Wait for the user to type 'approve' before proceeding.
+
+**Checkpoint 3 — GREEN**
+After implementation passes all tests, show:
+- \`git diff\` of all changed files
+- The test runner output confirming they pass
+- The type checker output confirming it passes
+Then output:
+  [ralf-once] Checkpoint 3: Implementation ready (GREEN). Type 'approve' to open PR and merge.
+Wait for the user to type 'approve' before opening a PR.
+
+## Playbook
+
+After all three checkpoints are approved, follow the ralf playbook below exactly.
+Use branch naming: ralf/issue-${ISSUE_NUM}-<slugified-title>
+Do NOT auto-merge — open the PR and stop. The human will merge.
+
+---
+
+HITL
+)"
+
+PLAYBOOK="$(cat "$PROMPT_FILE")"
+
+PROGRESS=""
+if [[ -f ralf-progress.txt ]]; then
+  PROGRESS="$(printf '\n\n---\n# Previous progress (ralf-progress.txt)\n\n'; cat ralf-progress.txt)"
+fi
+
+exec claude "${HITL_PREFIX}
+
+${PLAYBOOK}${PROGRESS}"
