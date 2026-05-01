@@ -16,6 +16,7 @@ sandbox_run() {
       --bind "$worktree" /workspace \
       "${mounts[@]}" \
       --ro-bind "$HOME/.claude" "$HOME/.claude" \
+      --ro-bind "$HOME/.config/gh" "$HOME/.config/gh" \
       --ro-bind /etc /etc \
       --proc /proc \
       --dev /dev \
