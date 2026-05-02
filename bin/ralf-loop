@@ -61,6 +61,15 @@ build_prompt() {
   fi
 }
 
+# Pre-flight: run outside the sandbox so any OAuth token refresh can write back to .credentials.json
+echo "$LP verifying claude auth..."
+if ! claude --model claude-haiku-4-5-20251001 --output-format text \
+     -p '.' >/dev/null 2>&1; then
+  echo "$LP_ERR ${C_RED}auth failed${C_RESET} — re-authenticate with: ${C_BOLD}claude${C_RESET}" >&2
+  exit 1
+fi
+echo "$LP ${C_GREEN}auth ok${C_RESET}"
+
 for ((i=1; i<=MAX; i++)); do
   echo "$LP ${C_BOLD}--- iteration $i/$MAX ---${C_RESET}"
 
