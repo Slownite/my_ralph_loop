@@ -26,6 +26,7 @@ sandbox_run() {
       --tmpfs /tmp \
       --setenv HOME "$HOME" \
       --setenv PATH "$PATH" \
+      --setenv GIT_SSH_COMMAND "ssh -F /dev/null" \
       --chdir /workspace \
       "$@"
   else
