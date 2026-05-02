@@ -1,105 +1,69 @@
 # ralf — AFK issue execution playbook
 
-You are an autonomous agent implementing GitHub issues via TDD. Follow this playbook exactly. Work on ONLY ONE issue per invocation. The issue number, title, and body are provided above this playbook.
+Work on ONLY ONE issue per invocation. The issue number, title, and body are provided above this playbook.
+
+> **BLOCKED protocol:** `gh issue edit N --add-label ralf-blocked --remove-label ralf` → go to **Step 8** (status: blocked), stop.
 
 ---
 
 ## Step 1 — Read prior context
 
-Read `ralf-progress.txt` if it exists. It contains summaries of previously completed iterations. Use it to understand what has already been done and avoid repeating work.
+Read `ralf-progress.txt` if it exists to understand what has already been done.
 
 ---
 
-## Step 2 — Sniff test runner and type checker
+## Step 2 — Detect commands
 
-Examine the project files in this order to determine the correct commands:
+Examine project files to determine commands. Skip lint silently if the linter or its runner is absent; note it in `ralf-progress.txt`. If no test runner is found, apply `ralf-blocked` and go to **Step 8**.
 
-| File | Test command | Type check command |
-|------|-------------|-------------------|
-| `package.json` | `npm test` (or the `test` script) | `npm run typecheck` / `tsc --noEmit` |
-| `pyproject.toml` / `setup.cfg` | `pytest` | `mypy .` / `pyright` |
-| `Makefile` | `make test` | `make typecheck` (if target exists) |
-| `Cargo.toml` | `cargo test` | `cargo check` |
-| `go.mod` | `go test ./...` | `go vet ./...` |
-
-If multiple files exist, prefer the one that appears most specific to the project. If no test runner is found, note this in `ralf-progress.txt` and apply the `ralf-blocked` label, then stop.
+| File | Test | Type check | Lint |
+|------|------|------------|------|
+| `package.json` | `npm test` | `tsc --noEmit` | `npm run lint` (if script exists) |
+| `pyproject.toml` / `setup.cfg` | `pytest` | `mypy .` / `pyright` | `ruff check .` |
+| `Makefile` | `make test` | `make typecheck` (if target exists) | `make lint` (if target exists) |
+| `Cargo.toml` | `cargo test` | `cargo check` | `cargo clippy` |
+| `go.mod` | `go test ./...` | `go vet ./...` | `golangci-lint run` (if installed) |
 
 ---
 
 ## Step 3 — Create a worktree and branch
 
-```bash
-SLUG=$(echo "<issue-title>" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g' | cut -c1-50)
-BRANCH="ralf/issue-N-$SLUG"
-git worktree add /tmp/ralf-issue-N "$BRANCH" 2>/dev/null || git worktree add /tmp/ralf-issue-N -b "$BRANCH"
-```
-
-All implementation work happens inside `/tmp/ralf-issue-N`. Do not modify the main working tree.
+Create branch `ralf/issue-N-<slug>` (slug = title lowercased, non-alphanumeric → hyphens, max 50 chars). Add a git worktree at `/tmp/ralf-issue-N`. All work happens there — do not modify the main working tree.
 
 ---
 
 ## Step 4 — Implement via TDD
 
-For each unchecked acceptance criterion in the issue body, follow the RED → GREEN cycle:
-
-### RED
-1. Write a failing test that directly verifies this criterion through the public interface
-2. Run the test suite — confirm it fails for the right reason
-3. Do not write any implementation code yet
-
-### GREEN
-1. Write the minimum implementation to make the test pass
-2. Run the test suite — confirm it passes
-3. Move to the next criterion
-
-Do not write all tests first then all implementation. One criterion at a time, RED → GREEN.
-
-**Good tests** verify observable behavior (what the system does), not implementation details (how it does it). They should pass when you refactor internals and fail only when behavior changes.
+For each unchecked acceptance criterion: write a failing test (RED), confirm it fails, then write the minimum implementation to pass (GREEN). One criterion at a time. Tests must verify observable behavior, not implementation details.
 
 ---
 
-## Step 5 — Check off criteria and run full suite
+## Step 5 — Verify all checks
 
-After all criteria are implemented:
-1. Run the full test suite — all tests must pass
-2. Run the type checker — must pass with no errors
-3. For each completed acceptance criterion, update the issue body to check the checkbox:
-   ```
-   gh issue edit N --body "<updated body with checked criteria>"
-   ```
+After all criteria are implemented, run in order:
+1. Full test suite
+2. Type checker
+3. Linter (if detected)
 
-If tests or type checks fail and you cannot fix them within 3 attempts:
+All must pass — → **BLOCKED** (do not open a PR) if any fails after 3 attempts.
+
+Then check off each completed criterion in the issue body:
+```bash
+gh issue edit N --body "<updated body with checked criteria>"
 ```
-gh issue edit N --add-label ralf-blocked --remove-label ralf
-```
-Go directly to **Step 8** (append to progress, status: blocked), then stop. Do not open a PR.
 
 ---
 
 ## Step 6 — Commit, open PR, and merge
 
-Inside the worktree:
 ```bash
 git add -A
-git commit -m "<concise description of what was implemented>"
-git push -u origin "$BRANCH"
-```
-
-Open a PR:
-```bash
+git commit -m "<concise description>"
+git push -u origin HEAD
 gh pr create --title "<issue title>" --body "Closes #N" --base main --head "$BRANCH"
 ```
 
-Wait for CI to pass. If CI passes:
-```bash
-gh pr merge --squash --auto
-```
-
-If CI fails and you cannot fix it within 3 attempts:
-```
-gh issue edit N --add-label ralf-blocked --remove-label ralf
-```
-Go directly to **Step 8** (append to progress, status: blocked), then stop.
+Wait for CI. If it passes: `gh pr merge --squash --auto`. → **BLOCKED** if CI fails after 3 attempts.
 
 ---
 
@@ -114,20 +78,18 @@ git worktree remove /tmp/ralf-issue-N
 
 ## Step 8 — Append to ralf-progress.txt (always runs)
 
-This step always runs — whether the issue succeeded, was blocked, or hit an error.
-
-Append a summary entry to `ralf-progress.txt` in the main working tree:
+Append to `ralf-progress.txt` in the main working tree:
 
 ```
 ---
 issue: #N <title>
 date: <ISO date>
 status: done | blocked
-summary: <one or two sentences — what was built, any notable decisions or blockers>
+summary: <one or two sentences>
 ---
 ```
 
-Commit this file to main:
+Commit to main:
 ```bash
 git add ralf-progress.txt
 git commit -m "ralf: log progress for issue #N"
