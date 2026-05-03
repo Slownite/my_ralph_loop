@@ -6,9 +6,10 @@
 guard_test_deletion() {
   local worktree="$1"
   local base="${2:-main}"
+  local target="${3:-HEAD}"
 
   local deleted
-  deleted=$(git -C "$worktree" diff "$base"...HEAD --name-only --diff-filter=D \
+  deleted=$(git -C "$worktree" diff "$base"..."$target" --name-only --diff-filter=D \
     | grep -E '(test_[^/]+\.(py|sh)$|[^/]+\.(test|spec)\.(ts|tsx|js|jsx)$|_test\.(go|rs)$)' \
     || true)
 

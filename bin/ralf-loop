@@ -70,6 +70,8 @@ if ! claude --model claude-haiku-4-5-20251001 --output-format text \
 fi
 echo "$LP ${C_GREEN}auth ok${C_RESET}"
 
+declare -A _processed_issues
+
 for ((i=1; i<=MAX; i++)); do
   echo "$LP ${C_BOLD}--- iteration $i/$MAX ---${C_RESET}"
 
@@ -86,6 +88,14 @@ for ((i=1; i<=MAX; i++)); do
   ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
   ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
   ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+
+  if [[ -n "${_processed_issues[$ISSUE_NUM]:-}" ]]; then
+    echo "$LP ${C_GREEN}issue ${C_YELLOW}#$ISSUE_NUM${C_RESET}${C_GREEN} already handled this run — no more actionable issues.${C_RESET}"
+    echo "<promise>COMPLETE</promise>"
+    exit 0
+  fi
+  _processed_issues[$ISSUE_NUM]=1
+
   echo "$LP picked issue ${C_YELLOW}#$ISSUE_NUM${C_RESET} — ${C_BOLD}$ISSUE_TITLE${C_RESET}"
 
   echo "$LP launching claude in sandbox for issue ${C_YELLOW}#$ISSUE_NUM${C_RESET}..."
@@ -145,7 +155,7 @@ for ((i=1; i<=MAX; i++)); do
 
   if [[ -n "$RALF_BRANCH" ]]; then
     echo "$LP running guard on branch ${C_BOLD}$RALF_BRANCH${C_RESET}..."
-    if ! guard_test_deletion "$PROJECT_DIR" "main" 2>/dev/null; then
+    if ! guard_test_deletion "$PROJECT_DIR" "main" "origin/$RALF_BRANCH" 2>/dev/null; then
       echo "$LP_ERR ${C_RED}guard failed${C_RESET} — test files deleted on branch $RALF_BRANCH" >&2
       BLOCKED_NUM=$(echo "$RALF_BRANCH" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
       if [[ -n "$BLOCKED_NUM" ]]; then
