@@ -12,12 +12,33 @@ sandbox_run() {
       [[ -d "$dir" ]] && mounts+=(--ro-bind "$dir" "$dir")
     done
 
+    # Build a writable temp copy of .claude.json with /workspace pre-trusted so
+    # Claude Code's interactive trust dialog is skipped (it reads hasTrustDialogAccepted).
+    local tmp_claude_json
+    tmp_claude_json=$(mktemp --suffix=.json)
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp_claude_json'" EXIT
+    if [[ -f "$HOME/.claude.json" ]] && command -v node &>/dev/null; then
+      node -e "
+        const fs = require('fs');
+        const d = JSON.parse(fs.readFileSync('$HOME/.claude.json', 'utf8'));
+        if (!d.projects) d.projects = {};
+        if (!d.projects['/workspace']) d.projects['/workspace'] = {};
+        d.projects['/workspace'].hasTrustDialogAccepted = true;
+        fs.writeFileSync('$tmp_claude_json', JSON.stringify(d));
+      "
+    elif [[ -f "$HOME/.claude.json" ]]; then
+      cp "$HOME/.claude.json" "$tmp_claude_json"
+    else
+      printf '{"projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' > "$tmp_claude_json"
+    fi
+
     bwrap \
       --bind "$worktree" /workspace \
       "${mounts[@]}" \
       --ro-bind "$HOME/.claude" "$HOME/.claude" \
       --tmpfs "$HOME/.claude/session-env" \
-      --ro-bind "$HOME/.claude.json" "$HOME/.claude.json" \
+      --bind "$tmp_claude_json" "$HOME/.claude.json" \
       --ro-bind "$HOME/.config/gh" "$HOME/.config/gh" \
       --ro-bind "$HOME/.ssh" "$HOME/.ssh" \
       --ro-bind /etc /etc \
