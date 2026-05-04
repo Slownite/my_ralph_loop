@@ -70,4 +70,7 @@ build_prompt() {
   fi
 }
 
-sandbox_run "$PROJECT_DIR" claude --model "$MODEL" -p "$(build_prompt)"
+echo "$LP launching claude (interactive HITL) — approve each checkpoint to continue..."
+sandbox_run "$PROJECT_DIR" claude --dangerously-skip-permissions \
+  --model "$MODEL" \
+  "$(build_prompt)"
