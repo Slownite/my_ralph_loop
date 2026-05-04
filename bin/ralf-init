@@ -14,7 +14,8 @@ else
 fi
 
 echo "${C_BOLD}${C_CYAN}ralf-init:${C_RESET} creating ralf labels..."
-gh label create ralf        --color 0075ca --description "Picked up by ralf" --force
-gh label create ralf-done   --color 0e8a16 --description "Completed by ralf"  --force
-gh label create ralf-blocked --color e4e669 --description "Blocked, needs human" --force
+gh label create ralf         --color 0075ca --description "Picked up by ralf"       --force
+gh label create ralf-done    --color 0e8a16 --description "Completed by ralf"        --force
+gh label create ralf-blocked --color e4e669 --description "Blocked, needs human"     --force
+gh label create ralf-review  --color bfd4f2 --description "PR open, awaiting review" --force
 echo "${C_BOLD}${C_GREEN}ralf-init:${C_RESET} done."

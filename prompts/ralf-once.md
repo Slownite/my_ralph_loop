@@ -26,7 +26,7 @@ After implementation passes all tests, show:
 - The type checker output confirming it passes
 - The linter output confirming it passes (if detected)
 Then output:
-  [ralf-once] Checkpoint 3: Implementation ready (GREEN). Type 'approve' to open PR and merge.
+  [ralf-once] Checkpoint 3: Implementation ready (GREEN). Type 'approve' to open PR.
 Wait for the user to type 'approve' before opening a PR.
 
 ## Playbook
@@ -93,7 +93,7 @@ gh issue edit N --body "<updated body with checked criteria>"
 
 ---
 
-## Step 6 — Commit, open PR, and merge
+## Step 6 — Commit and open PR
 
 ```bash
 git add -A
@@ -102,14 +102,14 @@ git push -u origin HEAD
 gh pr create --title "<issue title>" --body "Closes #N" --base main --head "$BRANCH"
 ```
 
-Wait for CI. If it passes: `gh pr merge --squash --auto`. → **BLOCKED** if CI fails after 3 attempts.
+Output the PR URL and stop. Do not merge — the reviewer will merge.
 
 ---
 
 ## Step 7 — Label and clean up
 
 ```bash
-gh issue edit N --add-label ralf-done --remove-label ralf
+gh issue edit N --add-label ralf-review --remove-label ralf
 git worktree remove /tmp/ralf-issue-N
 ```
 
