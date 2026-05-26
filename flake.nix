@@ -20,46 +20,49 @@
           pkgs.git
           pkgs.bash
           pkgs.jq
+          pkgs.xonsh
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
 
-        ralfAssets = pkgs.runCommand "ralf-assets" {} ''
+        # lib/ may be empty mid-rewrite; only ship it when it actually has files.
+        hasLib = builtins.pathExists ./lib && builtins.readDir ./lib != { };
+
+        ralfAssets = pkgs.runCommand "ralf-assets" { } ''
           mkdir -p $out/share/ralf
-          cp -r ${./lib} $out/share/ralf/lib
           cp -r ${./prompts} $out/share/ralf/prompts
+          ${pkgs.lib.optionalString hasLib "cp -r ${./lib} $out/share/ralf/lib"}
         '';
 
-        ralf-loop = pkgs.writeShellApplication {
-          name = "ralf-loop";
-          runtimeInputs = runtimeDeps;
-          text = ''
-            RALF_ROOT="${ralfAssets}/share/ralf"
-          '' + builtins.readFile ./bin/ralf-loop;
-        };
+        # Package a xonsh script: pin the interpreter to the store xonsh,
+        # put runtime tools on PATH, and expose the asset dir as RALF_ROOT.
+        mkXonshApp = name:
+          pkgs.runCommand name {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+          } ''
+            install -Dm755 ${./bin}/${name} $out/bin/${name}
+            substituteInPlace $out/bin/${name} \
+              --replace-fail "#!/usr/bin/env xonsh" "#!${pkgs.xonsh}/bin/xonsh"
+            wrapProgram $out/bin/${name} \
+              --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
+              --set RALF_ROOT ${ralfAssets}/share/ralf
+          '';
 
-        ralf-once = pkgs.writeShellApplication {
-          name = "ralf-once";
-          runtimeInputs = runtimeDeps;
-          text = ''
-            RALF_ROOT="${ralfAssets}/share/ralf"
-          '' + builtins.readFile ./bin/ralf-once;
-        };
-
-        ralf-init = pkgs.writeShellApplication {
-          name = "ralf-init";
-          runtimeInputs = runtimeDeps;
-          text = builtins.readFile ./bin/ralf-init;
-        };
+        ralf-loop = mkXonshApp "ralf-loop";
+        ralf-once = mkXonshApp "ralf-once";
       in {
         packages = {
-          inherit ralf-loop ralf-once ralf-init;
+          inherit ralf-loop ralf-once;
           default = pkgs.symlinkJoin {
             name = "ralf";
-            paths = [ ralf-loop ralf-once ralf-init ];
+            paths = [ ralf-loop ralf-once ];
           };
         };
 
         devShells.default = pkgs.mkShell {
-          packages = runtimeDeps ++ [ ralf-loop ralf-once ralf-init ];
+          packages = runtimeDeps;
+          # In-tree assets live at the repo root during development.
+          shellHook = ''
+            export RALF_ROOT="$PWD"
+          '';
         };
       });
 }
