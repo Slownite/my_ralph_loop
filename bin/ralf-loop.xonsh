@@ -1,0 +1,346 @@
+#!/usr/bin/env xonsh
+"""ralf-loop — autonomous AFK issue automation loop.
+
+Usage:
+  ralf-loop [max_iterations] [--model MODEL] [--no-auto-merge] [--dry-run]
+  ralf-loop --init
+  ralf-loop --list-models
+
+Picks pending issues from docs/issues/, dispatches each to opencode
+for TDD implementation, runs the pre-merge gate (test+typecheck+lint),
+and auto-merges to main when all checks pass."""
+
+import pathlib
+import sys
+import time
+import os as _os
+
+$XONSH_SHOW_TRACEBACK = True
+
+# ---- paths ---------------------------------------------------------------
+RALF_ROOT = pathlib.Path(os.environ.get('RALF_ROOT', '')) or pathlib.Path(__file__).parent.parent / 'ralf'
+sys.path.insert(0, str(RALF_ROOT / 'lib'))
+
+import config
+import commands
+import issues
+import guard
+import sandbox
+import prompts
+
+# ---- CLI parsing ---------------------------------------------------------
+def _usage():
+    print('Usage: ralf-loop [max_iterations] [--model MODEL] [--no-auto-merge] [--dry-run]')
+    print('       ralf-loop --init')
+    print('       ralf-loop --list-models')
+    sys.exit(1)
+
+def parse_args():
+    args = {
+        'max_iterations': None,
+        'model': None,
+        'auto_merge': True,
+        'dry_run': False,
+        'init': False,
+        'list_models': False,
+    }
+    i = 1
+    while i < len($ARGS):
+        a = $ARGS[i]
+        if a == '--init':
+            args['init'] = True
+        elif a == '--list-models':
+            args['list_models'] = True
+        elif a == '--model':
+            i += 1
+            if i >= len($ARGS):
+                print('error: --model requires a value', file=sys.stderr)
+                _usage()
+            args['model'] = $ARGS[i]
+        elif a == '--no-auto-merge':
+            args['auto_merge'] = False
+        elif a == '--dry-run':
+            args['dry_run'] = True
+        elif not a.startswith('--'):
+            try:
+                args['max_iterations'] = int(a)
+            except ValueError:
+                print(f'error: invalid number "{a}"', file=sys.stderr)
+                _usage()
+        else:
+            print(f'error: unknown flag {a}', file=sys.stderr)
+            _usage()
+        i += 1
+    return args
+
+# ---- helpers -------------------------------------------------------------
+
+def run_command(cmd_list, workdir=None, label=''):
+    """Run a shell command and return (rc, stdout, stderr)."""
+    import subprocess
+    print(f'  [{label}] running: {" ".join(cmd_list)}')
+    proc = subprocess.run(cmd_list, capture_output=True, text=True, cwd=workdir)
+    if proc.stdout:
+        print('  ' + '\n  '.join(proc.stdout.strip().split('\n')))
+    if proc.stderr:
+        print('  [stderr] ' + '\n  [stderr] '.join(proc.stderr.strip().split('\n')), file=sys.stderr)
+    return proc.returncode, proc.stdout, proc.stderr
+
+def prompt_for_model():
+    """Ask user to pick a model from opencode models output."""
+    print('No ralf.toml found. Let\'s set up one.')
+    rc, out, _ = run_command(['opencode', 'models'], label='fetching models')
+    if rc != 0:
+        print('Could not list models. Enter a model ID manually:', end=' ')
+        return input().strip()
+    models = [l.strip() for l in out.strip().split('\n') if l.strip()]
+    print('Available models:')
+    for i, m in enumerate(models[:20], 1):
+        print('  {:3}. {}'.format(i, m))
+    print(f'  (enter number 1-{min(20, len(models))} or type a model ID)')
+    print(f'  [default: claude-sonnet-4]')
+    choice = input('Model: ').strip()
+    if not choice:
+        return 'claude-sonnet-4'
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(models):
+            return models[idx]
+    except ValueError:
+        pass
+    return choice
+
+# ---- init ----------------------------------------------------------------
+
+def cmd_init():
+    print('[init] scanning docs/issues/')
+    paths = issues.get_issue_paths()
+    if not paths:
+        print('[init] no issue files found in docs/issues/')
+        return
+    count = 0
+    for p in paths:
+        if issues.add_frontmatter_if_missing(str(p)):
+            print(f'[init] added frontmatter to {p.name}')
+            count += 1
+    print(f'[init] done: updated {count} file(s)')
+
+# ---- list models ---------------------------------------------------------
+
+def cmd_list_models():
+    rc, out, _ = run_command(['opencode', 'models'], label='available models')
+    if rc != 0:
+        print('error: failed to list models', file=sys.stderr)
+        sys.exit(1)
+    print(out)
+
+# ---- main loop -----------------------------------------------------------
+
+def cmd_loop(args):
+    # ensure config
+    cfg_path = pathlib.Path('ralf.toml')
+    if not cfg_path.exists():
+        model = args['model'] or prompt_for_model()
+        cfg = config.generate_default(model)
+        if not args['dry_run']:
+            config.write_config(cfg)
+            print(f'[ralf] wrote ralf.toml with model="{model}"')
+        else:
+            print(f'[dry-run] would write ralf.toml with model="{model}"')
+    else:
+        cfg = config.read_config('ralf.toml')
+
+    model = args['model'] or cfg['model']['default']
+    max_iter = args['max_iterations'] or cfg['loop']['max_iterations']
+    auto_merge = args['auto_merge'] and cfg['merge']['auto']
+    dry_run = args['dry_run']
+
+    # detect commands
+    cmds = commands.detect_commands('.', cfg.get('commands'))
+    if not cmds['test']:
+        print('[ralf] error: no test runner detected — cannot gate', file=sys.stderr)
+        sys.exit(1)
+
+    print(f'[ralf] model: {model}')
+    print(f'[ralf] max_iterations: {max_iter}')
+    print(f'[ralf] commands: test={cmds["test"]} typecheck={cmds["typecheck"]} lint={cmds["lint"]}')
+
+    # ensure base branch exists
+    base_branch = 'main'
+
+    issues_worked = 0
+    while issues_worked < max_iter:
+        pending = [p for p in issues.get_issue_paths()
+                   if issues.read_issue(str(p))[0].get('status', '') == 'pending']
+        if not pending:
+            print('<promise>COMPLETE</promise>')
+            break
+
+        issue_path = str(pending[0])
+        issue_name = pathlib.Path(issue_path).name
+        issue_num = issues.extract_number(issue_name)
+
+        print(f'\n[ralf] === issue #{issue_num}: {issue_name} ===')
+
+        if dry_run:
+            print(f'[dry-run] would work on {issue_path}')
+            issues_worked += 1
+            continue
+
+        issues.set_status(issue_path, 'in_progress')
+
+        branch = f'ralf/issue-{issue_num}-{issues.slugify(issues.extract_title(issues.read_issue(issue_path)[1]))}'
+        worktree = f'/tmp/ralf-issue-{issue_num}'
+
+        # create branch + worktree
+        _ensure_branch_and_worktree(branch, worktree)
+
+        prompt = prompts.assemble_prompt(issue_path, cmds, RALF_ROOT)
+
+        # ---- iteration budget loop for this issue ------------------------
+        gate_passed = False
+        retry_info = None
+
+        while issues_worked < max_iter:
+            issues_worked += 1
+            print(f'\n[ralf] iteration {issues_worked}/{max_iter}')
+
+            # build the prompt (include retry context if any)
+            full_prompt = prompt
+            if retry_info:
+                full_prompt += (f'\n\n## Previous attempt failed — fix the issues below\n\n'
+                                f'{retry_info}\n\n')
+
+            # run opencode inside sandbox
+            print(f'  [opencode] running...')
+            oc_cmd = ['opencode', 'run',
+                      '--dangerously-skip-permissions',
+                      '-m', model,
+                      full_prompt]
+            rc, oc_out, oc_err = sandbox.sandbox_run(worktree, oc_cmd)
+
+            if rc != 0:
+                print(f'  [opencode] crashed (exit {rc}) — will retry')
+                # infrastructure failure: backoff + retry (no iteration cost)
+                issues_worked -= 1  # don't count infrastructure failures
+                _backoff_sleep()
+                retry_info = oc_out + oc_err
+                continue
+
+            # ---- gate ----------------------------------------------------
+            print('  [gate] running guard...')
+            guard_ok, guard_msg = guard.guard_test_deletion(worktree, base_branch)
+            print(f'  [guard] {guard_msg}')
+            if not guard_ok:
+                retry_info = guard_msg
+                continue
+
+            print('  [gate] running test suite...')
+            test_cmd = cmds['test'].split()
+            rc, tout, terr = run_command(test_cmd, workdir=worktree, label='test')
+            if rc != 0:
+                retry_info = f'Test suite failed (exit {rc}):\n{tout}\n{terr}'
+                continue
+
+            print('  [gate] running typecheck...')
+            if cmds['typecheck']:
+                tc_cmd = cmds['typecheck'].split()
+                rc, tout, terr = run_command(tc_cmd, workdir=worktree, label='typecheck')
+                if rc != 0:
+                    retry_info = f'Type check failed (exit {rc}):\n{tout}\n{terr}'
+                    continue
+
+            print('  [gate] running linter...')
+            if cmds['lint']:
+                lint_cmd = cmds['lint'].split()
+                rc, tout, terr = run_command(lint_cmd, workdir=worktree, label='lint')
+                if rc != 0:
+                    retry_info = f'Lint failed (exit {rc}):\n{tout}\n{terr}'
+                    continue
+
+            gate_passed = True
+            break  # exit iteration loop for this issue
+
+        # ---- post-issue ------------------------------------------------
+        if gate_passed:
+            if auto_merge:
+                _merge_to_main(branch, worktree, issue_num, issue_name, base_branch)
+                issues.set_status(issue_path, 'done')
+                _log_progress(issue_num, issue_name, 'done')
+            else:
+                print(f'[ralf] branch {branch} is ready — auto-merge disabled')
+                issues.set_status(issue_path, 'done')
+                _log_progress(issue_num, issue_name, 'done')
+        else:
+            print(f'[ralf] issue #{issue_num} — iterations exhausted, blocking')
+            issues.set_status(issue_path, 'blocked')
+            _log_progress(issue_num, issue_name, 'blocked')
+
+        # clean up worktree
+        run_command(['git', 'worktree', 'remove', worktree, '--force'],
+                    label='cleanup')
+
+    print(f'\n[ralf] done — {issues_worked} iteration(s) consumed')
+
+# ---- support functions ---------------------------------------------------
+
+def _ensure_branch_and_worktree(branch, worktree):
+    import subprocess
+    # check if worktree already exists (from previous retry within session)
+    worktree_path = pathlib.Path(worktree)
+    if worktree_path.exists():
+        print(f'  [git] reusing existing worktree at {worktree}')
+        return
+    # create branch from main
+    run_command(['git', 'checkout', '-b', branch], label='git')
+    run_command(['git', 'push', '-u', 'origin', 'HEAD'], label='git')
+    # create worktree
+    run_command(['git', 'worktree', 'add', worktree, branch], label='git')
+
+def _merge_to_main(branch, worktree, issue_num, issue_name, base_branch):
+    print(f'  [merge] merging {branch} to {base_branch}')
+    # fetch the branch commit message for progress log
+    msg = $(git -C @(worktree) log -1 --format=%s).strip()
+    # checkout main, merge, push
+    run_command(['git', 'checkout', base_branch], label='git')
+    run_command(['git', 'pull'], label='git')
+    run_command(['git', 'merge', branch, '--no-edit'], label='git')
+    run_command(['git', 'push'], label='git')
+    # delete remote branch
+    run_command(['git', 'push', 'origin', '--delete', branch], label='git')
+    run_command(['git', 'branch', '-d', branch], label='git')
+    print(f'  [merge] done — merged #{issue_num}')
+
+def _log_progress(issue_num, issue_name, status):
+    import datetime
+    entry = (f'\n---\n'
+             f'issue: #{issue_num} {issue_name}\n'
+             f'date: {datetime.date.today().isoformat()}\n'
+             f'status: {status}\n'
+             f'summary: ralf\n---\n')
+    with open('ralf-progress.txt', 'a') as f:
+        f.write(entry)
+    # commit to main
+    run_command(['git', 'add', 'ralf-progress.txt'], label='git')
+    run_command(['git', 'commit', '-m', f'ralf: log progress for issue #{issue_num}'],
+                label='git')
+    run_command(['git', 'push'], label='git')
+
+def _backoff_sleep():
+    # simple fixed backoff — could make exponential
+    import time
+    print('  [ralf] backing off 2s before retry...')
+    time.sleep(2)
+
+# ---- dispatch -----------------------------------------------------------
+
+def main():
+    args = parse_args()
+    if args['init']:
+        cmd_init()
+    elif args['list_models']:
+        cmd_list_models()
+    else:
+        cmd_loop(args)
+
+main()

@@ -1,5 +1,0 @@
-#!/usr/bin/env xonsh
-# ralf-once — single issue run for Claude Code.
-# RALF_ROOT points at the asset dir (prompts/, lib/).
-# TODO: rewrite in xonsh.
-print("ralf-once: not yet implemented")

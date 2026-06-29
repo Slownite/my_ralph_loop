@@ -1,0 +1,16 @@
+#!/usr/bin/env xonsh
+"""ralf-complete — model autocompletion helper.
+
+Outputs `opencode models` in a format suitable for shell autocompletion.
+Intended as the backend for both --list-models and shell completer scripts."""
+
+import sys
+import subprocess
+
+$XONSH_SHOW_TRACEBACK = True
+
+def main():
+    rc, out, _ = subprocess.run(['opencode', 'models'], capture_output=True, text=True)
+    sys.stdout.write(out)
+
+main()

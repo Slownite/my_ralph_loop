@@ -1,5 +1,0 @@
-#!/usr/bin/env xonsh
-# ralf-loop — AFK issue automation loop for Claude Code.
-# RALF_ROOT points at the asset dir (prompts/, lib/).
-# TODO: rewrite in xonsh.
-print("ralf-loop: not yet implemented")
