@@ -1,5 +1,5 @@
 ---
-status: pending
+status: done
 ---
 
 # Issue 001 — Guard tests in xonsh
@@ -16,11 +16,11 @@ This slice also establishes the xonsh test harness pattern (test runner, asserti
 
 ## Acceptance criteria
 
-- [ ] `ralf/tests/test_guard.xsh` exists with the same 5 test cases as the old `tests/guard_test.sh`
-- [ ] Each test creates a disposable git repo, makes a branch with a known diff, and asserts the guard's return value
-- [ ] `xonsh ralf/tests/test_guard.xsh` passes (exit 0)
+- [x] `ralf/tests/test_guard.xsh` exists with the same 5 test cases as the old `tests/guard_test.sh`
+- [x] Each test creates a disposable git repo, makes a branch with a known diff, and asserts the guard's return value
+- [x] `xonsh ralf/tests/test_guard.xsh` passes (exit 0)
 - [ ] The test file is listed in the flake's devShell check or can be run by the user manually
-- [ ] Old `tests/guard_test.sh` is no longer needed (already removed from git)
+- [x] Old `tests/guard_test.sh` is no longer needed (already removed from git)
 
 ## Blocked by
 
