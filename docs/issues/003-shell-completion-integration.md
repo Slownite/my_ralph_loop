@@ -16,10 +16,10 @@ The `bin/ralf-complete.xonsh` already exists as a backend that lists model IDs. 
 
 ## Acceptance criteria
 
-- [ ] Pressing Tab after `ralf-loop --model ` in the shell shows a list of model IDs from `opencode models`
-- [ ] The user's shell config (.bashrc, .zshrc, xonshrc, or equivalent) is updated to load the completer
-- [ ] `opencode models` is called once per completion request (no cached stale list)
-- [ ] Shell reload or new terminal session activates the completion without manual steps
+- [x] Pressing Tab after `ralf-loop --model ` in the shell shows a list of model IDs from `opencode models`
+- [ ] The user's shell config is updated to load the completer (add `$RALF_ROOT`-based source line to home-manager `rc.xsh` block)
+- [x] `opencode models` is called once per completion request (no cached stale list)
+- [ ] Shell reload activates completion (need `home-manager switch` or create `~/.xonshrc`)
 
 ## Blocked by
 
