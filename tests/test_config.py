@@ -2,9 +2,60 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ralf.config import validate_config
+import pytest
+
+from ralf.config import detect_project_commands, validate_config
 
 from .test_validate_cli import VALID_CONFIG
+
+
+@pytest.mark.parametrize(
+    ("marker", "contents", "commands"),
+    [
+        (
+            "package.json",
+            '{"scripts":{"lint":"eslint ."}}',
+            {
+                "test": ["npm", "test"],
+                "typecheck": ["tsc", "--noEmit"],
+                "lint": ["npm", "run", "lint"],
+            },
+        ),
+        (
+            "Makefile",
+            "test:\n\ttrue\n",
+            {
+                "test": ["make", "test"],
+                "typecheck": ["make", "typecheck"],
+                "lint": ["make", "lint"],
+            },
+        ),
+        (
+            "Cargo.toml",
+            "[package]\nname = 'example'\n",
+            {
+                "test": ["cargo", "test"],
+                "typecheck": ["cargo", "check"],
+                "lint": ["cargo", "clippy"],
+            },
+        ),
+        (
+            "go.mod",
+            "module example.test/project\n",
+            {
+                "test": ["go", "test", "./..."],
+                "typecheck": ["go", "vet", "./..."],
+                "lint": ["golangci-lint", "run"],
+            },
+        ),
+    ],
+)
+def test_project_commands_are_detected_as_argument_arrays(
+    tmp_path: Path, marker: str, contents: str, commands: dict[str, list[str]]
+) -> None:
+    (tmp_path / marker).write_text(contents)
+
+    assert detect_project_commands(tmp_path) == commands
 
 
 def test_configuration_requires_target_branch(tmp_path: Path) -> None:

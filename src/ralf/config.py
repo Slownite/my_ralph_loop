@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -28,6 +30,138 @@ SECTION_KEYS = {
     "sandbox": {"verification_network", "environment_allowlist"},
     "telemetry": {"max_runs", "max_age_days"},
 }
+
+HARNESS_COMMANDS: dict[str, list[str]] = {
+    "codex": [
+        "codex",
+        "exec",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-",
+    ],
+    "omp": ["omp", "-p", "--mode=json", "--approval-mode=yolo", "--max-time=3600"],
+    "opencode": ["opencode", "run", "--standalone", "--format=json", "--auto"],
+}
+
+
+def current_branch(project_root: Path) -> str:
+    """Return the project's checked-out branch."""
+
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch = result.stdout.strip()
+    if not branch:
+        raise ValueError("cannot initialize configuration from a detached HEAD")
+    return branch
+
+
+def detect_project_commands(project_root: Path) -> dict[str, list[str]]:
+    """Detect fixed verification argument arrays from project files."""
+
+    if (project_root / "package.json").is_file():
+        commands = {
+            "test": ["npm", "test"],
+            "typecheck": ["tsc", "--noEmit"],
+        }
+        try:
+            package: object = json.loads((project_root / "package.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            package = {}
+        if isinstance(package, dict):
+            scripts = cast(dict[object, object], package).get("scripts")
+            if isinstance(scripts, dict) and "lint" in scripts:
+                commands["lint"] = ["npm", "run", "lint"]
+        return commands
+    if (project_root / "pyproject.toml").is_file() or (project_root / "setup.cfg").is_file():
+        return {
+            "test": ["pytest"],
+            "typecheck": ["pyright"],
+            "lint": ["ruff", "check", "."],
+        }
+    if (project_root / "Makefile").is_file():
+        return {
+            "test": ["make", "test"],
+            "typecheck": ["make", "typecheck"],
+            "lint": ["make", "lint"],
+        }
+    if (project_root / "Cargo.toml").is_file():
+        return {
+            "test": ["cargo", "test"],
+            "typecheck": ["cargo", "check"],
+            "lint": ["cargo", "clippy"],
+        }
+    if (project_root / "go.mod").is_file():
+        return {
+            "test": ["go", "test", "./..."],
+            "typecheck": ["go", "vet", "./..."],
+            "lint": ["golangci-lint", "run"],
+        }
+    return {}
+
+
+def build_config(
+    project_root: Path,
+    *,
+    harness_profile: str,
+    harness_command: list[str],
+    model: str | None = None,
+) -> dict[str, object]:
+    """Build a complete version 1 configuration from init-time observations."""
+
+    harness: dict[str, object] = {
+        "profile": harness_profile,
+        "command": harness_command,
+    }
+    if model is not None:
+        harness["model"] = model
+    return {
+        "config_version": 1,
+        "target_branch": current_branch(project_root),
+        "issue_directory": "docs/issues",
+        "harness": harness,
+        "run": {
+            "max_issues": 1,
+            "max_attempts_per_issue": 3,
+            "attempt_timeout_seconds": 3600,
+        },
+        "commands": detect_project_commands(project_root),
+        "merge": {"auto": True, "push": False},
+        "sandbox": {"verification_network": False, "environment_allowlist": []},
+        "telemetry": {"max_runs": 100, "max_age_days": 30},
+    }
+
+
+def _toml_value(value: object) -> str:
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return str(value)
+    if type(value) is str:
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in cast(list[object], value)) + "]"
+    raise TypeError(f"unsupported TOML value: {type(value).__name__}")
+
+
+def write_config(config: dict[str, object], path: Path) -> None:
+    """Write configuration deterministically as TOML."""
+
+    lines: list[str] = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.append(f"[{key}]")
+            for child_key, child_value in cast(dict[str, object], value).items():
+                lines.append(f"{child_key} = {_toml_value(child_value)}")
+        else:
+            lines.append(f"{key} = {_toml_value(value)}")
+    path.write_text("\n".join(lines) + "\n")
 
 
 def load_config(path: Path) -> dict[str, object]:
