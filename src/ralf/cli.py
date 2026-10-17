@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import cast
 
@@ -55,45 +57,216 @@ def _select_interactive_harness(parser: argparse.ArgumentParser) -> str:
 
 
 def _add_run_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--dry-run", action="store_true", dest="dry_run")
-    parser.add_argument("--no-sandbox", action="store_true", dest="no_sandbox")
-    parser.add_argument("--max-issues", type=int, dest="max_issues")
-    parser.add_argument("--no-auto-merge", action="store_true", dest="no_auto_merge")
-    parser.add_argument("--push", action="store_true", dest="push")
-    parser.add_argument("--remote", dest="remote")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="preflight and print the exact execution plan without mutating anything",
+    )
+    parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        dest="no_sandbox",
+        help="run the Harness and verification without Bubblewrap (reduces isolation)",
+    )
+    parser.add_argument(
+        "--max-issues",
+        type=int,
+        dest="max_issues",
+        metavar="N",
+        help="stop after N issues in this run (default: run.max_issues from ralf.toml)",
+    )
+    parser.add_argument(
+        "--no-auto-merge",
+        action="store_true",
+        dest="no_auto_merge",
+        help="leave successful issues ready instead of merging them into the target",
+    )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        dest="push",
+        help="push the target branch after a successful merge",
+    )
+    parser.add_argument(
+        "--remote",
+        dest="remote",
+        metavar="NAME",
+        help="fetch NAME first and require a fast-forward target before running",
+    )
+
+
+def _version() -> str:
+    try:
+        return package_version("ralf-loop")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+_PARENT_DESCRIPTION = """\
+Coordinate unattended implementation of a project-owned issue queue.
+
+Ralf owns Issue state, Git mutations, sandboxing, verification, commits,
+merges, recovery, and audit records. The coding Harness edits files but can
+never declare its own work Ready or Done.
+"""
+
+_PARENT_EPILOG = """\
+a bare `ralf-loop` is exactly `ralf-loop run`
+
+examples:
+  ralf-loop init --harness opencode   write ralf.toml for the opencode Harness
+  ralf-loop validate                  check configuration and the issue queue
+  ralf-loop run --dry-run             preflight and print the plan only
+  ralf-loop status                    report issue states and preserved worktrees
+  ralf-loop retry 7                   resume blocked issue 7 with a fresh allowance
+  ralf-loop finalize 7                merge ready issue 7 into the target
+
+exit codes:
+  0    the requested operation completed
+  1    a workflow error that is not otherwise classified
+  2    configuration, issue-queue, or preflight validation failed
+  3    work became blocked and needs a deliberate retry
+  4    infrastructure failure; local work was preserved
+  130  interrupted by SIGINT or SIGTERM; local work was preserved
+"""
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ralf-loop")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        prog="ralf-loop",
+        description=_PARENT_DESCRIPTION,
+        epilog=_PARENT_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_version()}",
+        help="show the installed version and exit",
+    )
+    subparsers = parser.add_subparsers(dest="command", title="commands", metavar="<command>")
 
     initialize = subparsers.add_parser(
-        "init", help="initialize deterministic project configuration"
+        "init",
+        help="initialize deterministic project configuration",
+        description=(
+            "Write a complete, deterministic ralf.toml from the current branch, detected "
+            "project commands, and one selected Harness profile."
+        ),
+        epilog=(
+            "When ralf.toml already exists it is preserved and the new configuration is "
+            "written to ralf.toml.proposed instead."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    initialize.add_argument("--harness", choices=(*HARNESS_COMMANDS, "custom"))
-    initialize.add_argument("--harness-command", nargs=argparse.REMAINDER, metavar="ARG")
-    initialize.add_argument("--model")
+    initialize.add_argument(
+        "--harness",
+        choices=(*HARNESS_COMMANDS, "custom"),
+        help="Harness profile to configure; prompted interactively when omitted on a TTY",
+    )
+    initialize.add_argument(
+        "--harness-command",
+        nargs=argparse.REMAINDER,
+        metavar="ARG",
+        help="command for --harness custom; every remaining argument is captured verbatim",
+    )
+    initialize.add_argument(
+        "--model",
+        metavar="MODEL",
+        help="opaque provider/model string recorded for the Harness (no discovery or validation)",
+    )
 
-    validate = subparsers.add_parser("validate", help="validate configuration and issues")
-    validate.add_argument("--json", action="store_true", dest="as_json")
+    validate = subparsers.add_parser(
+        "validate",
+        help="validate configuration and issues",
+        description="Check configuration and the entire issue queue before any mutation.",
+    )
+    validate.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="print machine-readable results with stable code, message, and path fields",
+    )
 
-    run = subparsers.add_parser("run", help="run the issue queue")
+    run = subparsers.add_parser(
+        "run",
+        help="run the issue queue",
+        description=(
+            "Process pending issues in order, verifying and committing each one and "
+            "optionally merging successful work into the target."
+        ),
+        epilog=(
+            "Without --max-issues the run limit comes from run.max_issues in ralf.toml; "
+            "with auto-merge enabled, run also finalizes each successful issue."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     _add_run_options(run)
 
-    status = subparsers.add_parser("status", help="report issue workflow state")
-    status.add_argument("--json", action="store_true", dest="as_json")
+    status = subparsers.add_parser(
+        "status",
+        help="report issue workflow state",
+        description="Report pending, in-progress, ready, blocked, and done issues.",
+    )
+    status.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="print the same state as JSON",
+    )
 
-    finalize = subparsers.add_parser("finalize", help="merge one ready issue into the target")
-    finalize.add_argument("issue", type=int)
-    finalize.add_argument("--no-sandbox", action="store_true", dest="no_sandbox")
-    finalize.add_argument("--push", action="store_true", dest="push")
-    finalize.add_argument("--remote", dest="remote")
+    finalize = subparsers.add_parser(
+        "finalize",
+        help="merge one ready issue into the target",
+        description="Recheck a ready issue against the target and merge it.",
+    )
+    finalize.add_argument("issue", type=int, metavar="ISSUE", help="numeric ID of the ready issue")
+    finalize.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        dest="no_sandbox",
+        help="rerun the Gate without Bubblewrap (reduces isolation)",
+    )
+    finalize.add_argument(
+        "--push",
+        action="store_true",
+        dest="push",
+        help="push the target branch after merging",
+    )
+    finalize.add_argument(
+        "--remote",
+        dest="remote",
+        metavar="NAME",
+        help="fetch NAME first and require a fast-forward target before merging",
+    )
 
-    retry = subparsers.add_parser("retry", help="resume one blocked issue with a fresh allowance")
-    retry.add_argument("issue", type=int)
-    retry.add_argument("--no-sandbox", action="store_true", dest="no_sandbox")
-    retry.add_argument("--push", action="store_true", dest="push")
-    retry.add_argument("--remote", dest="remote")
+    retry = subparsers.add_parser(
+        "retry",
+        help="resume one blocked issue with a fresh allowance",
+        description=(
+            "Resume a blocked issue from its preserved edits with a fresh per-run allowance."
+        ),
+    )
+    retry.add_argument("issue", type=int, metavar="ISSUE", help="numeric ID of the blocked issue")
+    retry.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        dest="no_sandbox",
+        help="run the Harness and verification without Bubblewrap (reduces isolation)",
+    )
+    retry.add_argument(
+        "--push",
+        action="store_true",
+        dest="push",
+        help="push the target branch after a successful merge",
+    )
+    retry.add_argument(
+        "--remote",
+        dest="remote",
+        metavar="NAME",
+        help="fetch NAME first and require a fast-forward target before running",
+    )
 
     return parser
 
@@ -258,7 +431,9 @@ def _report_preflight(error: PreflightError) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0].startswith("-"):
+    if not arguments or (
+        arguments[0].startswith("-") and arguments[0] not in {"-h", "--help", "--version"}
+    ):
         arguments = ["run", *arguments]
     parser = _parser()
     args = parser.parse_args(arguments)
