@@ -1,53 +1,30 @@
-# ralf — AFK issue automation loop
+# Ralf context
 
-> **Legacy implementation context.** This document describes the current Xonsh loop while the Python rewrite is built alongside it. [GLOSSARY.md](GLOSSARY.md) is the canonical domain language for new work: **Harness** supersedes model/provider as the agent boundary, **Attempt** supersedes iteration, **Target** supersedes the hard-coded main branch, and **Ready** distinguishes verified work from merged **Done** work.
+Ralf is a Python 3.11+ Linux orchestrator that turns a project-owned queue of file-backed Issues into integrated work while keeping readiness and integration decisions outside the coding agent. [GLOSSARY.md](GLOSSARY.md) holds the canonical language; this document describes how the final system fits together.
 
-An autonomous loop that picks file-based issues from `docs/issues/`, dispatches them to opencode for TDD implementation, runs a local pre-merge gate (test + typecheck + lint), and auto-merges to main when all checks pass.
+## Actors and ownership
 
-## Language
+- **Ralf** owns Issue state, staging, commits, worktrees, verification, merges, optional pushes, recovery, and audit records.
+- A **Harness** is an external coding agent reached through one process boundary. It edits files and runs commands for feedback, and it can never declare its own work Ready or Done.
+- The **Target** is the project branch into which completed work is integrated. It is whatever branch `ralf-loop init` observed, not an assumed `main`.
 
-**Issue**:
-A markdown file in `docs/issues/` with YAML frontmatter containing a `status` field. Acceptance criteria are checkbox items in the body. Formerly a GitHub issue.
-_Status values_: `pending`, `in_progress`, `done`, `blocked`
+## Runtime flow
 
-**Loop**:
-The outer xonsh orchestrator (`ralf-loop`) that scans pending issues, dispatches each to opencode, gates the result, and merges or retries.
+1. `init` writes a deterministic configuration: target branch, fixed argument arrays for verification, one Harness profile, one issue per run, three attempts per issue, local auto-merge on, remote push off.
+2. `validate` checks configuration and the entire Issue Queue before any mutation. One malformed or ambiguous Issue blocks every run.
+3. `run` takes a `flock` in the Git directory, fetches an optional remote and accepts only a fast-forward target, then preflights the clean target tree and branch references. `--dry-run` performs the same preflight and prints one exact plan without mutating anything.
+4. For each pending Issue, Ralf commits `in_progress` on the Target, creates the feature branch and an XDG-state worktree from that commit, and runs the Harness as a fresh process with the prompt on standard input.
+5. Ralf runs the Guard and the configured verification commands through the sandboxed process boundary, reruns the Guard afterwards, revalidates repository, branch, worktree, and the eligible diff, and commits exactly the validated tree.
+6. The Issue becomes `ready`. With auto-merge, `finalize` synchronizes the Target, reruns the whole Gate against the merge candidate, merges `--no-ff`, commits `done` separately, removes the worktree, and optionally pushes.
 
-**Iteration**:
-One invocation of `opencode run`. Counts toward `max_iterations`. Includes both initial implementation and subsequent retry attempts on the same issue.
+## Failure semantics
 
-**Gate**:
-The local verification suite (test runner + type checker + linter) executed by ralf on the feature branch before merge. All must pass for merge to proceed.
+- Spawn failure, nonzero Harness exit, timeout, or signal is an **infrastructure failure**: Ralf preserves edits, branch, and worktree, leaves the Issue `in_progress`, stops, and does not consume an Attempt.
+- A successful Harness with no eligible diff, a guard violation, or a verification failure consumes one Attempt and starts a fresh process with the final 32 KiB of diagnostics.
+- Exhausting `max_attempts_per_issue` marks the Issue `blocked` and preserves its evidence. `retry` resumes the preserved identity with a fresh per-run allowance.
+- `SIGINT` and `SIGTERM` stop the active child, record the interruption, preserve state, and exit non-zero.
+- A merge conflict marks the Issue `blocked` and never rebases automatically; a push failure is an infrastructure failure that preserves all local successful work.
 
-**Playbook**:
-The prompt template (`ralf/prompts/ralf-issue.md`) injected with the issue body and detected command table, then sent to opencode. Ends at "code committed to branch" — the gate is ralf's responsibility.
+## Evidence
 
-**Branch**:
-A git branch `ralf/issue-N-slug` created from main in a disposable worktree. Implemented during retries on the same issue.
-
-**Worktree**:
-A disposable git worktree at `/tmp/ralf-issue-N` where all implementation and the gate run.
-
-**ralf.toml**:
-Per-project configuration file (auto-generated, user-editable) defining the default model, max iterations, command overrides, and merge behavior.
-
-**Init**:
-A mode (`ralf-loop --init`) that scans `docs/issues/*.md` for markdown issue files and prepends YAML frontmatter (`status: pending`) to any file missing it.
-
-**Guard**:
-A pre-gate check that verifies the branch has not decreased the net test file count relative to `main` (catches opencode deleting tests).
-
-## Relationships
-
-- A **Playbook** is assembled from the **Issue** body + the **Prompt** template + the detected **Command table**
-- A **Branch** is isolated in a **Worktree**; ralf runs **Gate** and **Guard** inside the worktree
-- The **Loop** consumes **Iteration** budget until all **Issues** are `done` or budget exhausted
-- **ralf.toml** supplies the default **model** and **Iteration** budget
-
-## Example dialogue
-
-> **Dev:** "What happens if the Gate fails on the initial implementation?"
-> **Domain expert:** "Ralf feeds the failure output back to opencode as a new iteration. It keeps retrying until the Gate passes or the iteration budget runs out — then the issue is blocked."
->
-> **Dev:** "And if opencode crashes mid-implementation?"
-> **Domain expert:** "That's an infrastructure failure, not an implementation failure — ralf retries with backoff using a separate counter, not the iteration budget."
+Workflow transitions are authoritative in Issue state and Git history. Structured JSONL records under the XDG state directory add run, issue, attempt, Harness, verification, Git, and transition metadata without prompts, diffs, environment values, absolute paths, credentials, or raw argument arrays. Bounded local transcripts hold raw output with restricted permissions.

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
+      - name: Sync development environment
+        run: uv sync
+
+      - name: Formatting
+        run: uv run ruff format --check src tests
+
+      - name: Linting
+        run: uv run ruff check src tests
+
+      - name: Strict typing
+        run: uv run pyright
+
+      - name: Behavior, Git lifecycle, and sandbox tests
+        run: uv run pytest
+
+      - name: Build the wheel
+        run: uv build
+
+      - name: Installed-wheel smoke test through uvx
+        run: |
+          wheel=$(ls dist/*.whl)
+          project=$(mktemp -d)
+          mkdir -p "$project/docs/issues"
+          cp -r tests/fixtures/valid-project/. "$project/"
+          cd "$project"
+          uvx --from "$OLDPWD/$wheel" ralf-loop validate --json
