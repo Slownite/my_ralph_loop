@@ -1,5 +1,7 @@
 # ralf — AFK issue automation loop
 
+> **Legacy implementation context.** This document describes the current Xonsh loop while the Python rewrite is built alongside it. [GLOSSARY.md](GLOSSARY.md) is the canonical domain language for new work: **Harness** supersedes model/provider as the agent boundary, **Attempt** supersedes iteration, **Target** supersedes the hard-coded main branch, and **Ready** distinguishes verified work from merged **Done** work.
+
 An autonomous loop that picks file-based issues from `docs/issues/`, dispatches them to opencode for TDD implementation, runs a local pre-merge gate (test + typecheck + lint), and auto-merges to main when all checks pass.
 
 ## Language

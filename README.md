@@ -2,6 +2,79 @@
 
 AFK issue automation loop. Picks file-based issues from `docs/issues/`, dispatches each to opencode for TDD implementation, runs a local pre-merge gate (test + typecheck + lint), and auto-merges to main when all checks pass.
 
+## Python validation preview
+
+The Python rewrite is being built alongside the current Xonsh loop. Its first tracer bullet provides strict, read-only validation through an installed `ralf-loop` command; the Xonsh implementation remains the active automation loop until parity and cutover.
+
+Python 3.11 or newer and [uv](https://docs.astral.sh/uv/) are required for this preview. Install from a checkout or Git URL rather than PyPI:
+
+```bash
+uv tool install .
+uv tool install git+https://github.com/Slownite/my_ralph_loop.git
+```
+
+For development:
+
+```bash
+uv sync
+uv run ralf-loop validate
+uv run ralf-loop validate --json
+uv run pytest
+uv run pyright
+uv run ruff check src tests
+```
+
+The version 1 configuration validated by this slice has this shape:
+
+```toml
+config_version = 1
+target_branch = "main"
+issue_directory = "docs/issues"
+
+[harness]
+profile = "custom"
+command = ["fake-agent"]
+# model = "opaque-provider-model-name"
+
+[run]
+max_issues = 1
+max_attempts_per_issue = 3
+attempt_timeout_seconds = 3600
+
+[commands]
+test = ["pytest"]
+typecheck = ["pyright"]
+lint = ["ruff", "check", "."]
+
+# Optional named commands are also argument arrays.
+[commands.custom]
+# docs = ["mkdocs", "build", "--strict"]
+
+[merge]
+auto = true
+push = false
+# remote = "origin"
+
+[sandbox]
+verification_network = false
+environment_allowlist = []
+
+[telemetry]
+max_runs = 100
+max_age_days = 30
+```
+
+Configuration rejects unknown keys, wrong types, unsupported versions, invalid Git branch names, non-positive limits, and empty or malformed command arrays. Issues retain the narrow `key: scalar` frontmatter format with only `status`, `branch`, and `attempts`; valid statuses are `pending`, `in_progress`, `ready`, `done`, and `blocked`.
+
+`validate` checks the complete issue queue before any later workflow may mutate the project. Its stable exit codes are:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Configuration and every issue are valid |
+| `2` | Validation failed; human output or JSON diagnostics explain every safely discoverable problem |
+
+With `--json`, output always contains a boolean `valid` field and an `errors` array. Each error has stable `code`, `message`, and `path` fields.
+
 ## Prerequisites
 
 - [Nix](https://nixos.org/download) with flakes enabled
