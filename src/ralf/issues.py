@@ -117,6 +117,68 @@ def load_issue(path: Path) -> Issue:
     )
 
 
+def issue_files(directory: Path) -> list[Path]:
+    """Return issue files ordered by their numeric identity."""
+
+    numbered: list[tuple[int, Path]] = []
+    for path in directory.glob("*.md"):
+        filename = ISSUE_FILENAME.fullmatch(path.name)
+        if filename is not None:
+            numbered.append((int(filename.group("id")), path))
+    return [path for _, path in sorted(numbered)]
+
+
+def issue_number(path: Path) -> int:
+    filename = ISSUE_FILENAME.fullmatch(path.name)
+    if filename is None:
+        raise IssueFormatError("filename must be <numeric-id>-<slug>.md")
+    return int(filename.group("id"))
+
+
+def issue_slug(path: Path) -> str:
+    filename = ISSUE_FILENAME.fullmatch(path.name)
+    if filename is None:
+        raise IssueFormatError("filename must be <numeric-id>-<slug>.md")
+    return filename.group("slug")
+
+
+def pending_issues(directory: Path) -> list[Issue]:
+    """Return pending issues in numeric order for deterministic processing."""
+
+    pending: list[Issue] = []
+    for path in issue_files(directory):
+        issue = load_issue(path)
+        if issue.status == IssueStatus.PENDING:
+            pending.append(issue)
+    return pending
+
+
+def find_issue(directory: Path, number: int) -> Issue | None:
+    for path in issue_files(directory):
+        if issue_number(path) == number:
+            return load_issue(path)
+    return None
+
+
+def write_issue_status(
+    path: Path,
+    *,
+    status: IssueStatus,
+    branch: str | None,
+    attempts: int,
+) -> None:
+    """Rewrite only the portable workflow metadata, preserving the issue body."""
+
+    issue = load_issue(path)
+    lines = ["---", f"status: {status.value}"]
+    if branch is not None:
+        lines.append(f"branch: {branch}")
+    lines.append(f"attempts: {attempts}")
+    lines.append("---")
+    lines.append("")
+    path.write_text("\n".join([*lines, issue.body, ""]))
+
+
 def validate_issues(directory: Path, display_directory: Path) -> list[Diagnostic]:
     """Validate every Markdown issue in a directory before work begins."""
 

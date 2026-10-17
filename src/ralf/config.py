@@ -10,6 +10,7 @@ from typing import cast
 
 from ralf.diagnostics import Diagnostic
 from ralf.git import is_valid_branch_name
+from ralf.harness import KNOWN_PROFILES
 
 ROOT_KEYS = {
     "config_version",
@@ -21,15 +22,17 @@ ROOT_KEYS = {
     "merge",
     "sandbox",
     "telemetry",
+    "guards",
 }
 SECTION_KEYS = {
     "harness": {"profile", "command", "model"},
     "run": {"max_issues", "max_attempts_per_issue", "attempt_timeout_seconds"},
     "commands": {"test", "typecheck", "lint", "custom"},
     "merge": {"auto", "push", "remote"},
-    "sandbox": {"verification_network", "environment_allowlist"},
+    "sandbox": {"verification_network", "environment_allowlist", "mounts"},
     "telemetry": {"max_runs", "max_age_days"},
 }
+MOUNT_KEYS = {"source", "target", "writable"}
 
 HARNESS_COMMANDS: dict[str, list[str]] = {
     "codex": [
@@ -425,6 +428,15 @@ def validate_config(path: Path) -> list[Diagnostic]:
                     "harness.profile",
                 )
             )
+        elif isinstance(profile, str) and profile not in KNOWN_PROFILES:
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_value",
+                    f'harness profile "{profile}" is not supported',
+                    path,
+                    "harness.profile",
+                )
+            )
         command = harness.get("command")
         if command is not None:
             _validate_command(command, "harness.command", path, diagnostics)
@@ -502,6 +514,9 @@ def validate_config(path: Path) -> list[Diagnostic]:
                     "sandbox.environment_allowlist",
                 )
             )
+        mounts = sandbox.get("mounts")
+        if mounts is not None:
+            _validate_mounts(mounts, path, diagnostics)
 
     telemetry = tables.get("telemetry")
     if telemetry is not None:
@@ -510,4 +525,103 @@ def validate_config(path: Path) -> list[Diagnostic]:
             if value is not None:
                 _validate_positive_integer(value, f"telemetry.{key}", path, diagnostics)
 
+    guards = config.get("guards")
+    if guards is not None:
+        if not isinstance(guards, dict):
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_type",
+                    'configuration key "guards" must be a table',
+                    path,
+                    "guards",
+                )
+            )
+        else:
+            guard_table = cast(dict[str, object], guards)
+            diagnostics.extend(
+                _diagnostic(
+                    "configuration_unknown_key",
+                    f'unknown configuration key "guards.{key}"',
+                    path,
+                    f"guards.{key}",
+                )
+                for key in sorted(guard_table.keys() - {"allowed_test_deletions"})
+            )
+            allowed = guard_table.get("allowed_test_deletions")
+            if allowed is not None and not _string_list(allowed, allow_empty=True):
+                diagnostics.append(
+                    _diagnostic(
+                        "configuration_invalid_type",
+                        'configuration key "guards.allowed_test_deletions" must be an array '
+                        "of non-empty strings",
+                        path,
+                        "guards.allowed_test_deletions",
+                    )
+                )
+
     return sorted(diagnostics, key=lambda diagnostic: (diagnostic.path, diagnostic.code))
+
+
+def _validate_mounts(mounts: object, path: Path, diagnostics: list[Diagnostic]) -> None:
+    if not isinstance(mounts, list):
+        diagnostics.append(
+            _diagnostic(
+                "configuration_invalid_type",
+                'configuration key "sandbox.mounts" must be an array of tables',
+                path,
+                "sandbox.mounts",
+            )
+        )
+        return
+    for index, mount in enumerate(cast(list[object], mounts)):
+        dotted = f"sandbox.mounts.{index}"
+        if not isinstance(mount, dict):
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_type",
+                    f'configuration key "{dotted}" must be a table',
+                    path,
+                    dotted,
+                )
+            )
+            continue
+        table = cast(dict[str, object], mount)
+        diagnostics.extend(
+            _diagnostic(
+                "configuration_unknown_key",
+                f'unknown configuration key "{dotted}.{key}"',
+                path,
+                f"{dotted}.{key}",
+            )
+            for key in sorted(table.keys() - MOUNT_KEYS)
+        )
+        source = table.get("source")
+        if type(source) is not str or not source:
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_type",
+                    f'configuration key "{dotted}.source" must be a non-empty string',
+                    path,
+                    f"{dotted}.source",
+                )
+            )
+        target = table.get("target")
+        if target is not None and (type(target) is not str or not target):
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_type",
+                    f'configuration key "{dotted}.target" must be a non-empty string',
+                    path,
+                    f"{dotted}.target",
+                )
+            )
+        writable = table.get("writable")
+        if writable is not None and type(writable) is not bool:
+            diagnostics.append(
+                _diagnostic(
+                    "configuration_invalid_type",
+                    f'configuration key "{dotted}.writable" must be a boolean',
+                    path,
+                    f"{dotted}.writable",
+                )
+            )
