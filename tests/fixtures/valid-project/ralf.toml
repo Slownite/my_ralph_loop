@@ -1,0 +1,29 @@
+config_version = 1
+target_branch = "main"
+issue_directory = "docs/issues"
+
+[harness]
+profile = "custom"
+command = ["fake-agent"]
+
+[run]
+max_issues = 1
+max_attempts_per_issue = 3
+attempt_timeout_seconds = 3600
+
+[commands]
+test = ["pytest"]
+typecheck = ["pyright"]
+lint = ["ruff", "check", "."]
+
+[merge]
+auto = true
+push = false
+
+[sandbox]
+verification_network = false
+environment_allowlist = []
+
+[telemetry]
+max_runs = 100
+max_age_days = 30
