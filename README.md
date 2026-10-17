@@ -13,6 +13,21 @@ uv tool install .
 uv tool install git+https://github.com/Slownite/my_ralph_loop.git
 ```
 
+Initialize a repository noninteractively by selecting an installed Harness. The optional model
+identifier is stored unchanged; Ralf does not discover or validate model names.
+
+```bash
+ralf-loop init --harness codex
+ralf-loop init --harness opencode --model provider/model-name
+ralf-loop init --harness custom --model opaque-name --harness-command my-agent --headless
+```
+
+Without `--harness`, `init` offers the detected `codex`, `omp`, and `opencode` executables only
+when standard input is a TTY. It records the current branch and detected project verification
+commands as argument arrays, creates an empty `docs/issues/` queue when needed, and uses one Issue
+per run, three Attempts per Issue, local auto-merge, and no remote push. If `ralf.toml` already
+exists, it is preserved and the replacement is written to `ralf.toml.proposed`.
+
 For development:
 
 ```bash
