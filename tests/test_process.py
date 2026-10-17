@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ralf.process import CommandHarness, ProcessOutcome
+from ralf.sandbox import bubblewrap_usable
 
 
 def write_executable(path: Path, source: str) -> Path:
@@ -181,6 +182,13 @@ def test_harness_fails_closed_when_sandbox_cannot_start(tmp_path: Path) -> None:
     assert marker.exists() is False
 
 
+def test_bubblewrap_usable_requires_a_working_executable() -> None:
+    assert bubblewrap_usable("definitely-missing-bwrap") is False
+
+
+@pytest.mark.skipif(
+    not bubblewrap_usable(), reason="Bubblewrap cannot create a sandbox on this host"
+)
 def test_harness_runs_in_sandbox_without_persisting_writes_outside_worktree(
     tmp_path: Path,
 ) -> None:

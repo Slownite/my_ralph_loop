@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from ralf.process import CommandHarness, ProcessOutcome
-from ralf.sandbox import Mount, SandboxPolicy, bubblewrap_available
+from ralf.sandbox import Mount, SandboxPolicy, bubblewrap_usable
 
 from .support import write_executable
 
 pytestmark = pytest.mark.skipif(
-    not bubblewrap_available(), reason="Bubblewrap is not available on this host"
+    not bubblewrap_usable(), reason="Bubblewrap cannot create a sandbox on this host"
 )
 
 

@@ -9,6 +9,7 @@ Harness is able to read.
 from __future__ import annotations
 
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,3 +92,42 @@ def require_bubblewrap(bubblewrap: str = DEFAULT_BUBBLEWRAP) -> None:
             f'isolation executable "{bubblewrap}" was not found; install Bubblewrap '
             "or pass --no-sandbox explicitly"
         )
+
+
+def bubblewrap_usable(bubblewrap: str = DEFAULT_BUBBLEWRAP) -> bool:
+    """Return whether Bubblewrap can actually create a sandbox on this host.
+
+    Installing the executable is not enough: a host can forbid the namespace
+    setup Bubblewrap needs (for example restricted unprivileged user
+    namespaces). Integration tests use this to skip where isolation cannot
+    start; the run itself still fails closed on a real startup failure.
+    """
+
+    if not bubblewrap_available(bubblewrap):
+        return False
+    command = [
+        bubblewrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--",
+        "true",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
