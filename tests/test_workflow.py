@@ -7,7 +7,15 @@ import json
 import subprocess
 from pathlib import Path
 
-from .support import DEFAULT_ISSUE, create_project, git, write_executable
+import pytest
+
+from ralf.git import GitError, GitRepository
+from ralf.issues import IssueStatus
+from ralf.orchestrator import InfrastructureFailure, Workflow
+from ralf.plan import PreflightError, build_plan, load_settings
+from ralf.sandbox import SandboxUnavailable
+
+from .support import DEFAULT_ISSUE, Project, create_project, git, write_executable
 
 SUCCESS = """\
 import sys
@@ -194,18 +202,79 @@ raise SystemExit(0 if count >= 2 else 1)
     assert "attempts: 2" in text
 
 
+def _refs(project: Project) -> str:
+    return git(project.root, "for-each-ref", "--format=%(refname) %(objectname)").stdout
+
+
+def _state_entries(project: Project) -> list[str]:
+    if not project.state.exists():
+        return []
+    return sorted(path.relative_to(project.state).as_posix() for path in project.state.rglob("*"))
+
+
 def test_dry_run_reports_a_plan_without_mutation(tmp_path: Path) -> None:
-    project = create_project(tmp_path, harness_source=SUCCESS, auto=True)
+    project = create_project(tmp_path, harness_source=SUCCESS, auto=True, remote=True)
     head = git(project.root, "rev-parse", "HEAD").stdout
+    refs_before = _refs(project)
     issue_before = project.issue_text()
+    config_before = (project.root / "ralf.toml").read_text()
+    state_before = _state_entries(project)
+    worktrees_before = project.worktrees()
 
     result = project.run("run", "--dry-run", "--no-sandbox", expect=0)
 
     assert "run plan" in result.stdout
     assert "0001 pending" in result.stdout
+    assert "harness executable:" in result.stdout
+    assert "origin" in result.stdout
     assert git(project.root, "rev-parse", "HEAD").stdout == head
+    assert _refs(project) == refs_before
     assert project.issue_text() == issue_before
-    assert project.worktrees() == [str(project.root)]
+    assert (project.root / "ralf.toml").read_text() == config_before
+    assert project.worktrees() == worktrees_before
+    assert _state_entries(project) == state_before
+
+
+def test_missing_bubblewrap_blocks_a_plan_unless_the_run_overrides_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(tmp_path, harness_source=SUCCESS, auto=False)
+    monkeypatch.chdir(project.root)
+    settings = load_settings(project.root / "ralf.toml")
+    repository = GitRepository(project.root)
+
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise SandboxUnavailable("isolation executable was not found")
+
+    monkeypatch.setattr("ralf.plan.require_bubblewrap", unavailable)
+
+    with pytest.raises(PreflightError, match="isolation executable"):
+        build_plan(settings, repository, no_sandbox=False, remote=None, fetch=False)
+
+    plan = build_plan(settings, repository, no_sandbox=True, remote=None, fetch=False)
+    assert plan.sandbox == "disabled_by_override"
+
+
+def test_status_commit_failure_is_an_infrastructure_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(tmp_path, harness_source=SUCCESS, auto=False)
+    workflow = Workflow(project.root, project.root / "ralf.toml", no_sandbox=True)
+    failed = subprocess.CompletedProcess(["git", "commit"], 1, stdout="", stderr="index is locked")
+
+    def failing_commit(message: str) -> str:
+        raise GitError(("commit",), failed)
+
+    monkeypatch.setattr(workflow.repository, "commit", failing_commit)
+
+    with pytest.raises(InfrastructureFailure):
+        workflow._commit_status(
+            project.issue(1),
+            IssueStatus.READY,
+            branch="ralf/issue-1-add-feature",
+            attempts=1,
+            message="ralf: issue 1 ready",
+        )
 
 
 def test_malformed_issue_blocks_the_plan(tmp_path: Path) -> None:

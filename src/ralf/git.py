@@ -62,13 +62,7 @@ class GitRepository:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
 
-    def _run(
-        self,
-        *arguments: str,
-        check: bool = True,
-        input_text: str | None = None,
-        environment: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
+    def _run(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         command = ("git", *_SAFE_CONFIG, *arguments)
         result = subprocess.run(
             command,
@@ -76,8 +70,6 @@ class GitRepository:
             check=False,
             capture_output=True,
             text=True,
-            input=input_text,
-            env=environment,
         )
         if check and result.returncode != 0:
             raise GitError(arguments, result)
@@ -96,9 +88,6 @@ class GitRepository:
     def head(self) -> str:
         return self._run("rev-parse", "HEAD").stdout.strip()
 
-    def rev_parse(self, reference: str) -> str:
-        return self._run("rev-parse", reference).stdout.strip()
-
     def branch_exists(self, name: str) -> bool:
         result = self._run("rev-parse", "--verify", "--quiet", f"refs/heads/{name}", check=False)
         return result.returncode == 0
@@ -108,12 +97,6 @@ class GitRepository:
 
     def has_remote(self, name: str = "origin") -> bool:
         return name in self._run("remote").stdout.split()
-
-    def remote_url(self, name: str) -> str | None:
-        result = self._run("remote", "get-url", name, check=False)
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip() or None
 
     def upstream(self, name: str = "origin", branch: str | None = None) -> str:
         reference = branch or self.current_branch()
@@ -128,55 +111,17 @@ class GitRepository:
     def is_ancestor(self, older: str, newer: str) -> bool:
         return self._run("merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
-    def can_fast_forward(self, branch: str, upstream: str) -> bool:
-        return self.is_ancestor(branch, upstream)
-
-    def changed_paths(self, base: str, *, working_tree: bool = False) -> list[Change]:
-        reference = base if working_tree else f"{base}..HEAD"
-        output = self._run("diff", "--name-status", "-M", reference).stdout
-        changes: list[Change] = []
-        for line in output.splitlines():
-            if not line.strip():
-                continue
-            fields = line.split("\t")
-            status = fields[0]
-            if status.startswith("R") or status.startswith("C"):
-                changes.append(Change(status=status[0], path=fields[2], previous_path=fields[1]))
-            else:
-                changes.append(Change(status=status[0], path=fields[1]))
-        return changes
-
     def staged_changes(self, base: str) -> list[Change]:
         """Return staged-and-working changes relative to a base, including new files."""
 
         self._run("add", "--all")
-        output = self._run("diff", "--cached", "--name-status", "-M", base).stdout
-        changes: list[Change] = []
-        for line in output.splitlines():
-            if not line.strip():
-                continue
-            fields = line.split("\t")
-            status = fields[0]
-            if status.startswith("R") or status.startswith("C"):
-                changes.append(Change(status=status[0], path=fields[2], previous_path=fields[1]))
-            else:
-                changes.append(Change(status=status[0], path=fields[1]))
-        return changes
+        return _parse_name_status(self._run("diff", "--cached", "--name-status", "-M", base).stdout)
 
     def merge_base(self, first: str, second: str) -> str:
         return self._run("merge-base", first, second).stdout.strip()
 
     def abort_merge(self) -> None:
         self._run("merge", "--abort", check=False)
-
-    def uncommitted_changes(self) -> list[Change]:
-        output = self._run("status", "--porcelain").stdout
-        changes: list[Change] = []
-        for line in output.splitlines():
-            status = line[:2].strip()
-            path = line[3:]
-            changes.append(Change(status=status[:1] or status, path=path))
-        return changes
 
     def worktrees(self) -> list[Path]:
         output = self._run("worktree", "list", "--porcelain").stdout
@@ -224,3 +169,19 @@ class GitRepository:
 
     def push(self, remote: str, branch: str) -> None:
         self._run("push", remote, f"refs/heads/{branch}:refs/heads/{branch}")
+
+
+def _parse_name_status(output: str) -> list[Change]:
+    """Parse ``git diff --name-status`` output, including renames and copies."""
+
+    changes: list[Change] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        status = fields[0]
+        if status.startswith(("R", "C")):
+            changes.append(Change(status=status[0], path=fields[2], previous_path=fields[1]))
+        else:
+            changes.append(Change(status=status[0], path=fields[1]))
+    return changes

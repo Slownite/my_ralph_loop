@@ -142,24 +142,6 @@ def issue_slug(path: Path) -> str:
     return filename.group("slug")
 
 
-def pending_issues(directory: Path) -> list[Issue]:
-    """Return pending issues in numeric order for deterministic processing."""
-
-    pending: list[Issue] = []
-    for path in issue_files(directory):
-        issue = load_issue(path)
-        if issue.status == IssueStatus.PENDING:
-            pending.append(issue)
-    return pending
-
-
-def find_issue(directory: Path, number: int) -> Issue | None:
-    for path in issue_files(directory):
-        if issue_number(path) == number:
-            return load_issue(path)
-    return None
-
-
 def write_issue_status(
     path: Path,
     *,

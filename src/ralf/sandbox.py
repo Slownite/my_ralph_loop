@@ -79,7 +79,6 @@ class SandboxPolicy:
 
 
 AGENT_POLICY = SandboxPolicy(network=True)
-VERIFICATION_POLICY = SandboxPolicy(network=False)
 
 
 def bubblewrap_available(bubblewrap: str = DEFAULT_BUBBLEWRAP) -> bool:

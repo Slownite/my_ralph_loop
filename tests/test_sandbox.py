@@ -105,6 +105,30 @@ else:
     assert "no network" in result.stdout
 
 
+def test_sandboxed_process_only_receives_allowlisted_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    executable = write_executable(
+        worktree / "harness.py",
+        """\
+import os
+
+print("secret" if "RALF_SANDBOX_SECRET" in os.environ else "clean")
+""",
+    )
+    monkeypatch.setenv("RALF_SANDBOX_SECRET", "must-not-leak")
+
+    result = CommandHarness((str(executable),), environment_allowlist=("PATH",)).run(
+        "prompt", worktree=worktree
+    )
+
+    assert result.outcome is ProcessOutcome.SUCCESS
+    assert result.sandboxed is True
+    assert result.stdout == "clean\n"
+
+
 def test_missing_bubblewrap_fails_closed(tmp_path: Path) -> None:
     marker = tmp_path / "ran"
     executable = write_executable(

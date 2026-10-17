@@ -10,7 +10,9 @@ from types import TracebackType
 
 from ralf.config import validate_config
 from ralf.git import GitError, GitRepository
+from ralf.harness import probe_executable, resolve_harness
 from ralf.issues import IssueStatus, issue_files, issue_number, load_issue, validate_issues
+from ralf.sandbox import SandboxUnavailable, require_bubblewrap
 from ralf.settings import Settings
 
 
@@ -38,6 +40,8 @@ class RunPlan:
     selected: int | None
     harness_profile: str
     harness_command: tuple[str, ...]
+    harness_executable: str
+    harness_version: str | None
     verification_commands: tuple[tuple[str, tuple[str, ...]], ...]
     sandbox: str
     auto_merge: bool
@@ -47,35 +51,14 @@ class RunPlan:
     max_attempts_per_issue: int
     attempt_timeout_seconds: float
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "target_branch": self.target_branch,
-            "selected": self.selected,
-            "issues": [
-                {"number": issue.number, "status": issue.status.value, "branch": issue.branch}
-                for issue in self.issues
-            ],
-            "harness": {
-                "profile": self.harness_profile,
-                "command": list(self.harness_command),
-            },
-            "verification_commands": [
-                {"name": name, "command": list(arguments)}
-                for name, arguments in self.verification_commands
-            ],
-            "sandbox": self.sandbox,
-            "merge": {"auto": self.auto_merge, "push": self.push, "remote": self.remote},
-            "limits": {
-                "max_issues": self.max_issues,
-                "max_attempts_per_issue": self.max_attempts_per_issue,
-                "attempt_timeout_seconds": self.attempt_timeout_seconds,
-            },
-        }
-
     def describe(self) -> str:
         lines = ["ralf-loop run plan"]
         lines.append(f"  target branch: {self.target_branch}")
         lines.append(f"  harness: {self.harness_profile} ({' '.join(self.harness_command)})")
+        lines.append(
+            f"  harness executable: {self.harness_executable} "
+            f"({self.harness_version or 'version unknown'})"
+        )
         lines.append(f"  sandbox: {self.sandbox}")
         lines.append(f"  auto-merge: {'on' if self.auto_merge else 'off'}")
         lines.append(f"  push: {'on' if self.push else 'off'} ({self.remote or 'no remote'})")
@@ -171,22 +154,28 @@ def build_plan(
     elif selected_remote is None and repository.has_remote("origin"):
         selected_remote = "origin"
 
-    if fetch and selected_remote is not None:
+    if selected_remote is not None:
+        if fetch:
+            try:
+                repository.fetch(selected_remote)
+            except GitError as error:
+                messages.append(f"could not fetch remote: {error}")
+        upstream = repository.upstream(selected_remote)
+        if repository.has_upstream(selected_remote):
+            target = settings.target_branch
+            if not repository.is_ancestor(target, upstream) and not repository.is_ancestor(
+                upstream, target
+            ):
+                messages.append(
+                    f'target branch "{target}" has diverged from '
+                    f"{selected_remote}; refusing to rewrite it"
+                )
+
+    if not no_sandbox:
         try:
-            repository.fetch(selected_remote)
-        except GitError as error:
-            messages.append(f"could not fetch remote: {error}")
-        else:
-            upstream = repository.upstream(selected_remote)
-            if repository.has_upstream(selected_remote):
-                target = settings.target_branch
-                if not repository.is_ancestor(target, upstream) and not repository.is_ancestor(
-                    upstream, target
-                ):
-                    messages.append(
-                        f'target branch "{target}" has diverged from '
-                        f"{selected_remote}; refusing to rewrite it"
-                    )
+            require_bubblewrap()
+        except SandboxUnavailable as error:
+            messages.append(str(error))
 
     if messages:
         raise PreflightError(messages)
@@ -199,12 +188,17 @@ def build_plan(
         if selected is None and issue.status == IssueStatus.PENDING:
             selected = issue_number(path)
 
+    harness = resolve_harness(settings.harness)
+    probe = probe_executable(harness)
+
     return RunPlan(
         target_branch=settings.target_branch,
         issues=tuple(planned),
         selected=selected,
-        harness_profile=str(settings.harness.get("profile", "")),
-        harness_command=_command(settings),
+        harness_profile=harness.profile,
+        harness_command=harness.command,
+        harness_executable=probe.executable,
+        harness_version=probe.version,
         verification_commands=settings.verification_commands,
         sandbox="disabled_by_override" if no_sandbox else "bubblewrap",
         auto_merge=settings.auto_merge,
@@ -214,9 +208,3 @@ def build_plan(
         max_attempts_per_issue=settings.max_attempts_per_issue,
         attempt_timeout_seconds=settings.attempt_timeout_seconds,
     )
-
-
-def _command(settings: Settings) -> tuple[str, ...]:
-    from ralf.harness import resolve_harness
-
-    return resolve_harness(settings.harness).command

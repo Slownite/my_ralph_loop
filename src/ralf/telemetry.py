@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 SENSITIVE_FIELDS = frozenset(
     {
@@ -94,12 +95,22 @@ class Telemetry:
     def _append(self, payload: dict[str, object]) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         line = json.dumps(payload, sort_keys=True) + "\n"
-        descriptor = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        descriptor = os.open(self._path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
         try:
-            os.write(descriptor, line.encode("utf-8"))
+            separator = "\n" if self._ends_mid_record(descriptor) else ""
+            os.write(descriptor, (separator + line).encode("utf-8"))
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+    @staticmethod
+    def _ends_mid_record(descriptor: int) -> bool:
+        """Return whether the open file ends with an interrupted partial line."""
+
+        size = os.fstat(descriptor).st_size
+        if size == 0:
+            return False
+        return os.pread(descriptor, 1, size - 1) != b"\n"
 
     def record(self, event: str, **fields: object) -> dict[str, object]:
         """Append one safe structured record and return it."""
@@ -125,14 +136,10 @@ class Telemetry:
             return
         with self._path.open("r", encoding="utf-8") as handle:
             for line in handle:
-                stripped = line.strip()
-                if not stripped or not line.endswith("\n"):
+                if not line.endswith("\n"):
                     continue
-                try:
-                    value = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(value, dict):
+                value = _parse_record(line)
+                if value is not None:
                     yield value
 
     def incomplete_tail(self) -> bool:
@@ -162,9 +169,6 @@ class Telemetry:
             os.close(descriptor)
         return path
 
-    def transcript_directory(self, run_id: str) -> Path:
-        return self.directory / "transcripts" / run_id
-
     def cleanup(self, *, now: float | None = None) -> dict[str, int]:
         """Retain at most ``max_runs`` or ``max_age_days`` and record cleanup."""
 
@@ -189,14 +193,101 @@ class Telemetry:
                     removed_age += 1
                 else:
                     removed_runs += 1
-        summary = {"removed_runs": removed_runs, "removed_runs_age": removed_age}
-        if removed_runs or removed_age:
+        removed_records = self._trim_records(moment)
+        summary = {
+            "removed_runs": removed_runs,
+            "removed_runs_age": removed_age,
+            "removed_records": removed_records,
+        }
+        if removed_runs or removed_age or removed_records:
             self.record(
                 "telemetry_cleanup",
                 removed_runs=removed_runs,
                 removed_runs_age=removed_age,
+                removed_records=removed_records,
             )
         return summary
+
+    def _trim_records(self, moment: float) -> int:
+        """Drop records for an aged-out run, preserving an interrupted tail."""
+
+        if not self._path.exists():
+            return 0
+        content = self._path.read_text(encoding="utf-8")
+        if not content:
+            return 0
+        complete: list[tuple[str, dict[str, object]]] = []
+        partial = ""
+        for raw in content.splitlines(keepends=True):
+            if not raw.endswith("\n"):
+                partial = raw
+                continue
+            value = _parse_record(raw)
+            if value is not None:
+                complete.append((raw, value))
+        cutoff = moment - self.max_age_days * 24 * 60 * 60
+        latest: dict[str, float] = {}
+        for _raw, value in complete:
+            run = value.get("run")
+            if not isinstance(run, str) or not run:
+                continue
+            stamp = _timestamp(value)
+            if stamp > latest.get(run, float("-inf")):
+                latest[run] = stamp
+        ordered = sorted(latest.items(), key=lambda item: item[1], reverse=True)
+        keep_runs = {
+            run
+            for index, (run, stamp) in enumerate(ordered)
+            if index < self.max_runs and stamp >= cutoff
+        }
+
+        kept: list[str] = []
+        removed = 0
+        for raw, value in complete:
+            if _record_is_retained(value, keep_runs, cutoff):
+                kept.append(raw)
+            else:
+                removed += 1
+        if removed:
+            self._rewrite("".join(kept) + partial)
+        return removed
+
+    def _rewrite(self, content: str) -> None:
+        temporary = self._path.with_name(self._path.name + ".tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(descriptor, content.encode("utf-8"))
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, self._path)
+
+
+def _parse_record(line: str) -> dict[str, object] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        value = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(value, dict):
+        return cast("dict[str, object]", value)
+    return None
+
+
+def _timestamp(value: dict[str, object]) -> float:
+    moment = value.get("time")
+    if isinstance(moment, (int, float)) and not isinstance(moment, bool):
+        return float(moment)
+    return 0.0
+
+
+def _record_is_retained(value: dict[str, object], keep_runs: set[str], cutoff: float) -> bool:
+    run = value.get("run")
+    if isinstance(run, str) and run:
+        return run in keep_runs
+    return _timestamp(value) >= cutoff
 
 
 def _remove_tree(path: Path) -> None:

@@ -83,6 +83,44 @@ def test_unknown_profile_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("name", ["codex", "omp", "opencode"])
+def test_fake_builtin_timeout_is_propagated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    worktree = tmp_path / "assigned-worktree"
+    worktree.mkdir()
+    write_executable(tmp_path / "bin" / name, "import time\ntime.sleep(30)\n")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+
+    spec = resolve_harness({"profile": name})
+    result = CommandHarness(
+        spec.command,
+        environment_allowlist=("PATH",),
+        timeout_seconds=0.1,
+        termination_grace_seconds=0.1,
+    ).run("the prompt", worktree=worktree, no_sandbox=True)
+
+    assert result.outcome is ProcessOutcome.TIMEOUT
+
+
+@pytest.mark.parametrize("name", ["codex", "omp", "opencode"])
+def test_fake_builtin_nonzero_exit_is_classified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    worktree = tmp_path / "assigned-worktree"
+    worktree.mkdir()
+    write_executable(tmp_path / "bin" / name, "import sys\nsys.exit(7)\n")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+
+    spec = resolve_harness({"profile": name})
+    result = CommandHarness(spec.command, environment_allowlist=("PATH",)).run(
+        "the prompt", worktree=worktree, no_sandbox=True
+    )
+
+    assert result.outcome is ProcessOutcome.NONZERO_EXIT
+    assert result.returncode == 7
+
+
+@pytest.mark.parametrize("name", ["codex", "omp", "opencode"])
 def test_fake_builtin_executables_receive_arguments_stdin_and_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:

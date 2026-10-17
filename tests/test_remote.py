@@ -91,6 +91,21 @@ def test_diverged_target_stops_before_mutation(tmp_path: Path) -> None:
     assert "status: pending" in project.issue_text()
 
 
+def test_dry_run_reports_divergence_from_the_last_known_upstream(tmp_path: Path) -> None:
+    project = create_project(tmp_path, harness_source=SUCCESS, remote=True, auto=False)
+    _advance_remote(project)
+    git(project.root, "fetch", "origin")
+    (project.root / "local.txt").write_text("local\n")
+    git(project.root, "add", ".")
+    git(project.root, "commit", "-q", "-m", "local advance")
+
+    result = project.run("run", "--dry-run", "--no-sandbox")
+
+    assert result.returncode == 2
+    assert "diverged" in result.stderr
+    assert "status: pending" in project.issue_text()
+
+
 def test_push_failure_is_infrastructure_failure_and_preserves_local_work(tmp_path: Path) -> None:
     project = create_project(tmp_path, harness_source=SUCCESS, remote=True, auto=True, push=True)
     hook = project.root.parent / "origin.git" / "hooks" / "pre-receive"

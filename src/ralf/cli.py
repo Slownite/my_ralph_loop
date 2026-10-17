@@ -91,7 +91,9 @@ def _parser() -> argparse.ArgumentParser:
 
     retry = subparsers.add_parser("retry", help="resume one blocked issue with a fresh allowance")
     retry.add_argument("issue", type=int)
-    _add_run_options(retry)
+    retry.add_argument("--no-sandbox", action="store_true", dest="no_sandbox")
+    retry.add_argument("--push", action="store_true", dest="push")
+    retry.add_argument("--remote", dest="remote")
 
     return parser
 
@@ -173,21 +175,35 @@ def _workflow(args: argparse.Namespace) -> Workflow:
     )
 
 
+def _warn_no_sandbox(args: argparse.Namespace) -> None:
+    if getattr(args, "no_sandbox", False):
+        print(
+            "warning: --no-sandbox disables Bubblewrap; the Harness and verification "
+            "commands run with full filesystem access",
+            file=sys.stderr,
+        )
+
+
 def _run_run(args: argparse.Namespace) -> int:
-    workflow = _workflow(args)
+    _warn_no_sandbox(args)
     if args.dry_run:
 
         def dry_run() -> int:
+            workflow = _workflow(args)
             with RepositoryLock(workflow.repository):
                 plan = workflow.plan(fetch=False)
             print(plan.describe())
             return EXIT_OK
 
         return _execute(dry_run)
-    return _execute(workflow.run)
+    return _execute(lambda: _workflow(args).run())
 
 
 def _run_status(args: argparse.Namespace) -> int:
+    return _execute(lambda: _show_status(args))
+
+
+def _show_status(args: argparse.Namespace) -> int:
     workflow = _workflow(args)
     state = workflow.status()
     if args.as_json:
@@ -206,13 +222,13 @@ def _run_status(args: argparse.Namespace) -> int:
 
 
 def _run_finalize(args: argparse.Namespace) -> int:
-    workflow = _workflow(args)
-    return _execute(lambda: workflow.finalize_issue(args.issue))
+    _warn_no_sandbox(args)
+    return _execute(lambda: _workflow(args).finalize_issue(args.issue))
 
 
 def _run_retry(args: argparse.Namespace) -> int:
-    workflow = _workflow(args)
-    return _execute(lambda: workflow.retry_issue(args.issue))
+    _warn_no_sandbox(args)
+    return _execute(lambda: _workflow(args).retry_issue(args.issue))
 
 
 def _execute(action: Callable[[], int]) -> int:

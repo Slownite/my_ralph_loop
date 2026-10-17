@@ -22,7 +22,6 @@ from ralf.harness import HarnessSpec, resolve_harness
 from ralf.issues import (
     Issue,
     IssueStatus,
-    find_issue,
     issue_files,
     issue_number,
     issue_slug,
@@ -148,9 +147,14 @@ class Workflow:
         message: str,
     ) -> None:
         write_issue_status(path, status=status, branch=branch, attempts=attempts)
-        self.repository.stage_all()
-        if self.repository.has_staged_changes():
-            self.repository.commit(message)
+        try:
+            self.repository.stage_all()
+            if self.repository.has_staged_changes():
+                self.repository.commit(message)
+        except GitError as error:
+            raise InfrastructureFailure(
+                f"could not record issue state for {path.name}: {error}"
+            ) from error
 
     def _build_prompt(self, number: int, issue: Issue, attempt: int, diagnostics: str) -> str:
         lines = [
@@ -496,6 +500,7 @@ class Workflow:
                 target=plan.target_branch,
                 harness=plan.harness_profile,
                 sandbox=plan.sandbox,
+                sandbox_override=self.no_sandbox,
             )
             self._synchronize_target(run_id)
 
@@ -594,10 +599,6 @@ class Workflow:
                 if self._worktree_path(issue.number).is_dir()
             ],
         }
-
-
-def find_issue_number(directory: Path, number: int) -> Issue | None:
-    return find_issue(directory, number)
 
 
 def _violation_diagnostics(violations: list[Violation]) -> str:

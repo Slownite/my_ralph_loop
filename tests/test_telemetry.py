@@ -82,6 +82,49 @@ def test_cleanup_retains_optionally_and_records_cleanup(tmp_path: Path) -> None:
     assert [record["event"] for record in telemetry.read_records()] == ["telemetry_cleanup"]
 
 
+def test_cleanup_removes_records_for_excess_runs(tmp_path: Path) -> None:
+    telemetry = Telemetry(tmp_path, max_runs=1, max_age_days=30)
+    now = 1_000_000_000.0
+    telemetry.record("run_start", run="old", time=now - 10)
+    telemetry.record("run_end", run="old", time=now - 9)
+    telemetry.record("run_start", run="recent", time=now - 1)
+    telemetry.record("run_end", run="recent", time=now)
+
+    summary = telemetry.cleanup(now=now)
+
+    assert summary["removed_records"] == 2
+    runs = [record.get("run") for record in telemetry.read_records() if "run" in record]
+    assert runs == ["recent", "recent"]
+
+
+def test_cleanup_removes_records_older_than_the_age_limit(tmp_path: Path) -> None:
+    telemetry = Telemetry(tmp_path, max_runs=100, max_age_days=30)
+    now = 2_000_000_000.0
+    telemetry.record("run_start", run="stale", time=now - 40 * 24 * 60 * 60)
+    telemetry.record("run_start", run="fresh", time=now)
+
+    summary = telemetry.cleanup(now=now)
+
+    assert summary["removed_records"] == 1
+    runs = [record.get("run") for record in telemetry.read_records() if "run" in record]
+    assert runs == ["fresh"]
+
+
+def test_cleanup_retains_an_interrupted_record_tail(tmp_path: Path) -> None:
+    telemetry = Telemetry(tmp_path, max_runs=1, max_age_days=30)
+    telemetry.record("run_start", run="old", time=1.0)
+    telemetry.record("run_start", run="new", time=2.0)
+    with telemetry.records_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"event": "run_end", "run": "new"')
+
+    summary = telemetry.cleanup(now=2.0)
+
+    assert summary["removed_records"] == 1
+    assert '{"event": "run_end", "run": "new"' in telemetry.records_path.read_text()
+    runs = [record.get("run") for record in telemetry.read_records() if "run" in record]
+    assert runs == ["new"]
+
+
 def test_repository_state_directory_is_keyed_by_identity(tmp_path: Path) -> None:
     monkeypatch_state = tmp_path / "state"
     os.environ["XDG_STATE_HOME"] = str(monkeypatch_state)

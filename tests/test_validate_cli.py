@@ -170,6 +170,25 @@ def test_validate_json_reports_every_issue_queue_error_before_work(tmp_path: Pat
     }
 
 
+def test_run_maps_configuration_preflight_to_exit_two(tmp_path: Path) -> None:
+    (tmp_path / "docs" / "issues").mkdir(parents=True)
+    (tmp_path / "ralf.toml").write_text(
+        VALID_CONFIG.replace("[telemetry]\nmax_runs = 100\nmax_age_days = 30\n", "")
+    )
+
+    result = subprocess.run(
+        ["ralf-loop", "run", "--dry-run"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "invalid:" in result.stderr
+
+
 def test_validate_human_confirms_configuration_and_queue(tmp_path: Path) -> None:
     (tmp_path / "docs" / "issues").mkdir(parents=True)
     (tmp_path / "ralf.toml").write_text(VALID_CONFIG)

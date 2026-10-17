@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -136,23 +137,41 @@ def resolve_harness(harness: Mapping[str, object]) -> HarnessSpec:
     )
 
 
-def probe_executable(spec: HarnessSpec) -> dict[str, str | None]:
-    """Capture the executable name and reported version for diagnostics only."""
+@dataclass(frozen=True, slots=True)
+class HarnessProbe:
+    """Diagnostic identity of a resolved Harness executable."""
+
+    executable: str
+    version: str | None
+
+
+def probe_executable(spec: HarnessSpec) -> HarnessProbe:
+    """Capture the executable name and, for a built-in, its reported version.
+
+    Only built-in profiles are executed, because their CLI contract documents
+    ``--version``. A custom argument-array Harness is an escape hatch: Ralf
+    records its resolved name but never runs it outside a real attempt. The
+    probe itself runs in a throwaway directory with no standard input, so a
+    version query can neither mutate the repository nor consume a prompt.
+    """
 
     resolved = shutil.which(spec.executable)
     version: str | None = None
-    if resolved is not None:
+    if spec.profile in BUILTIN_PROFILES and resolved is not None:
         try:
-            result = subprocess.run(
-                [resolved, "--version"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            with tempfile.TemporaryDirectory(prefix="ralf-probe-") as scratch:
+                result = subprocess.run(
+                    [resolved, "--version"],
+                    cwd=scratch,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    stdin=subprocess.DEVNULL,
+                )
         except (OSError, subprocess.SubprocessError):
             version = None
         else:
             lines = (result.stdout or result.stderr).strip().splitlines()
             version = lines[0] if lines else None
-    return {"executable": spec.executable, "version": version}
+    return HarnessProbe(executable=spec.executable, version=version)
