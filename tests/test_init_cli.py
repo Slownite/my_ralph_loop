@@ -93,7 +93,7 @@ def test_init_writes_complete_deterministic_configuration(tmp_path: Path) -> Non
         "telemetry": {"max_runs": 100, "max_age_days": 30},
     }
 
-    validation = _run(project, "validate", "--json", path=bin_dir)
+    validation = _run(project, "validate", "--local", "--json", path=bin_dir)
 
     assert validation.returncode == 0
 

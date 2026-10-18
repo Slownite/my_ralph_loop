@@ -259,7 +259,7 @@ def test_status_commit_failure_is_an_infrastructure_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = create_project(tmp_path, harness_source=SUCCESS, auto=False)
-    workflow = Workflow(project.root, project.root / "ralf.toml", no_sandbox=True)
+    workflow = Workflow(project.root, project.root / "ralf.toml", no_sandbox=True, local=True)
     failed = subprocess.CompletedProcess(["git", "commit"], 1, stdout="", stderr="index is locked")
 
     def failing_commit(message: str) -> str:

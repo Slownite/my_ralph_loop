@@ -5,12 +5,16 @@ Ralf coordinates unattended implementation of a project-owned queue while keepin
 ## Language
 
 **Issue**:
-A bounded unit of requested project work with acceptance criteria and a workflow status.
+A bounded unit of requested project work, sourced from GitHub or local Markdown, with acceptance criteria and a workflow status.
 _Avoid_: Task, job, ticket
 
 **Issue Queue**:
-The ordered collection of Issues available to Ralf within one project.
+The ordered collection of Issues available from the active Issue Source.
 _Avoid_: Backlog, task list
+
+**Issue Source**:
+The authoritative place from which Ralf selects Issues and to which it reports their workflow state.
+_Avoid_: Backend, tracker mode
 
 **Target**:
 The project line into which completed Issue work is integrated.

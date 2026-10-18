@@ -80,8 +80,11 @@ class Project:
         environment = os.environ.copy()
         environment["XDG_STATE_HOME"] = str(self.state)
         environment.update(self.extra_environment)
+        command_arguments = list(arguments)
+        if command_arguments and command_arguments[0] in {"run", "status", "finalize", "retry"}:
+            command_arguments.insert(1, "--local")
         result = subprocess.run(
-            ["ralf-loop", *arguments],
+            ["ralf-loop", *command_arguments],
             cwd=self.root,
             env=environment,
             check=False,

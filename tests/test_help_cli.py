@@ -46,6 +46,7 @@ def test_run_help_documents_every_run_option(capsys: CaptureFixture[str]) -> Non
         "--no-auto-merge",
         "--push",
         "--remote",
+        "--local",
     ):
         assert option in output
     assert "run.max_issues" in output

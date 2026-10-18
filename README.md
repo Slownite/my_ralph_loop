@@ -9,6 +9,7 @@ Canonical domain language lives in [GLOSSARY.md](GLOSSARY.md). Hard-to-reverse d
 - Linux
 - Python 3.11 or newer
 - Git
+- [GitHub CLI](https://cli.github.com/) authenticated for the repository (default Issue Source)
 - [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) for isolation, unless a run explicitly passes `--no-sandbox`
 
 ## Install
@@ -37,13 +38,13 @@ A bare `ralf-loop` is exactly `ralf-loop run`.
 | Command | Purpose |
 |---------|---------|
 | `ralf-loop init` | Write a complete, deterministic `ralf.toml` from the current branch, detected project commands, and one selected Harness profile |
-| `ralf-loop validate [--json]` | Validate configuration and the whole issue queue before any mutation |
-| `ralf-loop run [--dry-run]` | Process pending issues in order, optionally merging successful work |
-| `ralf-loop status [--json]` | Report pending, in-progress, ready, blocked, and done issues plus preserved worktrees |
-| `ralf-loop finalize <issue>` | Recheck a ready issue against the target and merge it |
-| `ralf-loop retry <issue>` | Resume a blocked issue from its preserved edits with a fresh per-run allowance |
+| `ralf-loop validate [--json]` | Validate configuration and the GitHub Issue Source |
+| `ralf-loop run [--dry-run]` | Process GitHub Issues in order, optionally merging successful work |
+| `ralf-loop status [--json]` | Report Issue state plus preserved worktrees |
+| `ralf-loop finalize <issue>` | Recheck a Ready Issue against the Target and merge it |
+| `ralf-loop retry <issue>` | Resume a Blocked Issue from its preserved edits |
 
-Run options: `--no-sandbox`, `--max-issues N`, `--no-auto-merge`, `--push`, `--remote NAME`.
+GitHub is the default Issue Source. Pass `--local` to `validate`, `run`, `status`, `finalize`, or `retry` to use the configured Markdown queue instead. Other run options are `--no-sandbox`, `--max-issues N`, `--no-auto-merge`, `--push`, and `--remote NAME`.
 
 ### Exit codes
 
@@ -65,7 +66,7 @@ Run options: `--no-sandbox`, `--max-issues N`, `--no-auto-merge`, `--push`, `--r
 ```toml
 config_version = 1
 target_branch = "main"
-issue_directory = "docs/issues"
+issue_directory = "docs/issues" # used with --local
 
 [harness]
 profile = "codex"          # codex, omp, opencode, or custom
@@ -106,7 +107,17 @@ allowed_test_deletions = []
 
 Configuration is versioned and rejects unknown sections or keys, invalid types, empty command arrays, unknown harness profiles, invalid branch references, and non-positive limits. All executable commands are argument arrays; shell syntax requires an explicit shell invocation. The optional model value is stored as an opaque string with no dynamic discovery or validation.
 
-## Issues
+## Issue Sources
+
+### GitHub (default)
+
+Ralf selects the oldest open, unassigned GitHub Issue carrying the `ready-for-agent` triage role. It reads the actual tracker labels from `docs/agents/triage-labels.md` when Matt Pocock's setup skill has created that mapping; otherwise the canonical `ready-for-agent` and `ready-for-human` names are used. `validate` fails clearly when either required mapped label does not exist.
+
+Ralf assigns a selected Issue to `@me`. A Blocked Issue moves from `ready-for-agent` to `ready-for-human`; a Done Issue loses `ready-for-agent` and is closed as completed. Ready work remains open and assigned until it is finalized. Recovery metadata is mirrored privately under the repository's XDG state directory and is never committed to the project.
+
+Every triaged Issue should still carry exactly one category label (`bug` or `enhancement`) and one state label, as defined by Matt Pocock's `triage` skill. Ralf consumes the state role; it does not perform triage.
+
+### Local Markdown (`--local`)
 
 Issues are Markdown files named `<numeric-id>-<slug>.md` in the configured issue directory. The numeric prefix is identity and processing order. Frontmatter is deliberately narrow: `status`, `branch`, and `attempts`.
 
@@ -126,8 +137,8 @@ Status progresses `pending -> in_progress -> ready -> done`, with `blocked` as a
 
 ## How a run works
 
-1. Preflight validates configuration, the whole issue queue, the clean target tree, the target branch, branch references, and optional remote state, under a per-repository `flock`.
-2. Ralf commits the `in_progress` transition on the target, then creates the feature branch and an XDG-state worktree from that commit.
+1. Preflight validates configuration, the active Issue Source, the clean Target tree, branch references, and optional remote state, under a per-repository `flock`.
+2. Ralf claims a GitHub Issue or commits a local Issue's `in_progress` transition, then creates the feature branch and an XDG-state worktree.
 3. The Harness runs as a fresh process with the prompt on standard input and the worktree as its working directory. It edits files but cannot own issue state, staging, commits, worktrees, verification, merges, or pushes.
 4. Ralf runs the guards and verification commands in Bubblewrap, then reruns the guards to catch formatter or check mutations.
 5. Ralf revalidates repository, branch, worktree, and the eligible diff, then commits exactly the validated tree and marks the issue `ready`.
@@ -158,6 +169,7 @@ src/ralf/           # installed Python package
   cli.py            # init, validate, run, status, finalize, retry
   config.py         # versioned configuration and init
   issues.py         # file-backed issue queue and transitions
+  github_issues.py  # GitHub label mapping, intake, and transitions
   guards.py         # protected-path and test-deletion guards
   git.py            # Ralf-owned Git operations
   harness.py        # data-driven Harness profiles

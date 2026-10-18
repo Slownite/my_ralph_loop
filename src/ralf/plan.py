@@ -128,11 +128,12 @@ def build_plan(
     no_sandbox: bool,
     remote: str | None,
     fetch: bool = True,
+    issue_directory: Path | None = None,
 ) -> RunPlan:
     """Validate the whole repository and produce one exact plan without mutation."""
 
     messages: list[str] = []
-    issue_directory = Path(settings.issue_directory)
+    issue_directory = issue_directory or Path(settings.issue_directory)
     issue_diagnostics = validate_issues(issue_directory, issue_directory)
     messages.extend(f"{item.path}: {item.message}" for item in issue_diagnostics)
 

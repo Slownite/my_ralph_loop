@@ -39,7 +39,7 @@ max_age_days = 30
 
 def run_validate(project: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["ralf-loop", "validate", "--json"],
+        ["ralf-loop", "validate", "--local", "--json"],
         cwd=project,
         check=False,
         capture_output=True,
@@ -49,7 +49,7 @@ def run_validate(project: Path) -> subprocess.CompletedProcess[str]:
 
 def run_validate_human(project: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["ralf-loop", "validate"],
+        ["ralf-loop", "validate", "--local"],
         cwd=project,
         check=False,
         capture_output=True,
@@ -177,7 +177,7 @@ def test_run_maps_configuration_preflight_to_exit_two(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        ["ralf-loop", "run", "--dry-run"],
+        ["ralf-loop", "run", "--local", "--dry-run"],
         cwd=tmp_path,
         check=False,
         capture_output=True,

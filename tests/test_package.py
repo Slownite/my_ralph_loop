@@ -42,7 +42,7 @@ def test_built_wheel_runs_and_loads_resources_outside_checkout(tmp_path: Path) -
     (project / "docs" / "issues").mkdir(parents=True)
     (project / "ralf.toml").write_text(VALID_CONFIG)
     result = subprocess.run(
-        [environment / "bin" / "ralf-loop", "validate", "--json"],
+        [environment / "bin" / "ralf-loop", "validate", "--local", "--json"],
         cwd=project,
         check=False,
         capture_output=True,

@@ -1,6 +1,6 @@
 # Ralf context
 
-Ralf is a Python 3.11+ Linux orchestrator that turns a project-owned queue of file-backed Issues into integrated work while keeping readiness and integration decisions outside the coding agent. [GLOSSARY.md](GLOSSARY.md) holds the canonical language; this document describes how the final system fits together.
+Ralf is a Python 3.11+ Linux orchestrator that turns a project-owned Issue Queue into integrated work while keeping readiness and integration decisions outside the coding agent. GitHub is the default Issue Source; `--local` selects the file-backed queue. [GLOSSARY.md](GLOSSARY.md) holds the canonical language; this document describes how the final system fits together.
 
 ## Actors and ownership
 
@@ -11,9 +11,9 @@ Ralf is a Python 3.11+ Linux orchestrator that turns a project-owned queue of fi
 ## Runtime flow
 
 1. `init` writes a deterministic configuration: target branch, fixed argument arrays for verification, one Harness profile, one issue per run, three attempts per issue, local auto-merge on, remote push off.
-2. `validate` checks configuration and the entire Issue Queue before any mutation. One malformed or ambiguous Issue blocks every run.
+2. `validate` checks configuration and the active Issue Source before any mutation. GitHub selects unassigned Issues carrying the mapped `ready-for-agent` role; `--local` validates the configured Markdown queue.
 3. `run` takes a `flock` in the Git directory, fetches an optional remote and accepts only a fast-forward target, then preflights the clean target tree and branch references. `--dry-run` performs the same preflight and prints one exact plan without mutating anything.
-4. For each pending Issue, Ralf commits `in_progress` on the Target, creates the feature branch and an XDG-state worktree from that commit, and runs the Harness as a fresh process with the prompt on standard input.
+4. For each Pending Issue, Ralf claims it on GitHub or commits its local `in_progress` transition, creates the feature branch and an XDG-state worktree, and runs the Harness as a fresh process with the prompt on standard input.
 5. Ralf runs the Guard and the configured verification commands through the sandboxed process boundary, reruns the Guard afterwards, revalidates repository, branch, worktree, and the eligible diff, and commits exactly the validated tree.
 6. The Issue becomes `ready`. With auto-merge, `finalize` synchronizes the Target, reruns the whole Gate against the merge candidate, merges `--no-ff`, commits `done` separately, removes the worktree, and optionally pushes.
 
@@ -27,4 +27,4 @@ Ralf is a Python 3.11+ Linux orchestrator that turns a project-owned queue of fi
 
 ## Evidence
 
-Workflow transitions are authoritative in Issue state and Git history. Structured JSONL records under the XDG state directory add run, issue, attempt, Harness, verification, Git, and transition metadata without prompts, diffs, environment values, absolute paths, credentials, or raw argument arrays. Bounded local transcripts hold raw output with restricted permissions.
+Workflow transitions are authoritative in the active Issue Source and Git history. GitHub recovery state is mirrored under the XDG state directory; local Issue transitions are committed. Structured JSONL records add run, issue, attempt, Harness, verification, Git, and transition metadata without prompts, diffs, environment values, absolute paths, credentials, or raw argument arrays. Bounded local transcripts hold raw output with restricted permissions.

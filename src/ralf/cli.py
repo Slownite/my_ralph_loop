@@ -58,6 +58,11 @@ def _select_interactive_harness(parser: argparse.ArgumentParser) -> str:
 
 def _add_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
+        "--local",
+        action="store_true",
+        help="use the local Markdown issue queue instead of GitHub labels",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         dest="dry_run",
@@ -188,6 +193,11 @@ def _parser() -> argparse.ArgumentParser:
         dest="as_json",
         help="print machine-readable results with stable code, message, and path fields",
     )
+    validate.add_argument(
+        "--local",
+        action="store_true",
+        help="validate the local Markdown issue queue instead of GitHub labels",
+    )
 
     run = subparsers.add_parser(
         "run",
@@ -215,6 +225,11 @@ def _parser() -> argparse.ArgumentParser:
         dest="as_json",
         help="print the same state as JSON",
     )
+    status.add_argument(
+        "--local",
+        action="store_true",
+        help="report the local Markdown issue queue instead of GitHub issues",
+    )
 
     finalize = subparsers.add_parser(
         "finalize",
@@ -222,6 +237,11 @@ def _parser() -> argparse.ArgumentParser:
         description="Recheck a ready issue against the target and merge it.",
     )
     finalize.add_argument("issue", type=int, metavar="ISSUE", help="numeric ID of the ready issue")
+    finalize.add_argument(
+        "--local",
+        action="store_true",
+        help="finalize an Issue from the local Markdown queue instead of GitHub",
+    )
     finalize.add_argument(
         "--no-sandbox",
         action="store_true",
@@ -249,6 +269,11 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     retry.add_argument("issue", type=int, metavar="ISSUE", help="numeric ID of the blocked issue")
+    retry.add_argument(
+        "--local",
+        action="store_true",
+        help="retry an Issue from the local Markdown queue instead of GitHub",
+    )
     retry.add_argument(
         "--no-sandbox",
         action="store_true",
@@ -318,8 +343,14 @@ def _run_validate(args: argparse.Namespace) -> int:
         if not any(error.code == "configuration_invalid_toml" for error in errors):
             config = load_config(CONFIG_PATH)
             issue_directory = config.get("issue_directory")
-            if isinstance(issue_directory, str) and issue_directory:
+            if args.local and isinstance(issue_directory, str) and issue_directory:
                 errors.extend(validate_issues(Path(issue_directory), Path(issue_directory)))
+
+    if not errors and not args.local:
+        try:
+            _workflow(args).validate_issue_source()
+        except InfrastructureFailure as error:
+            errors.append(Diagnostic(code="github_issue_source", message=str(error), path="github"))
 
     if errors:
         if args.as_json:
@@ -345,6 +376,7 @@ def _workflow(args: argparse.Namespace) -> Workflow:
         auto_merge=False if getattr(args, "no_auto_merge", False) else None,
         push=True if getattr(args, "push", False) else None,
         max_issues=getattr(args, "max_issues", None),
+        local=getattr(args, "local", False),
     )
 
 
@@ -383,6 +415,7 @@ def _show_status(args: argparse.Namespace) -> int:
         print(json.dumps(state, sort_keys=True))
         return EXIT_OK
     print(f"target branch: {state['target_branch']}")
+    print(f"issue source: {state['issue_source']}")
     issues = state["issues"]
     assert isinstance(issues, list)
     typed_issues = cast("list[dict[str, object]]", issues)

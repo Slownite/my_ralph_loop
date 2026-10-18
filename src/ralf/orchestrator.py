@@ -8,10 +8,12 @@ implementation failures consume bounded attempts and become ``blocked``.
 from __future__ import annotations
 
 import contextlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from ralf.git import Change, GitError, GitRepository
+from ralf.github_issues import GitHubIssueError, GitHubIssueQueue
 from ralf.guards import (
     Violation,
     eligible_changes,
@@ -77,6 +79,7 @@ class Workflow:
         auto_merge: bool | None = None,
         push: bool | None = None,
         max_issues: int | None = None,
+        local: bool = False,
     ) -> None:
         self.root = repository_root.resolve()
         self.config_path = config_path
@@ -89,6 +92,8 @@ class Workflow:
         self.push = self.settings.push if push is None else push
         self.max_issues = self.settings.max_issues if max_issues is None else max_issues
         state = repository_state_directory(self.root)
+        self.local = local
+        self.github_issues = None if local else GitHubIssueQueue(self.root, state / "github-issues")
         self.telemetry = Telemetry(
             state, max_runs=self.settings.max_runs, max_age_days=self.settings.max_age_days
         )
@@ -98,7 +103,28 @@ class Workflow:
 
     @property
     def issue_directory(self) -> Path:
+        if self.github_issues is not None:
+            return self.github_issues.directory
         return Path(self.settings.issue_directory)
+
+    def refresh_issues(self) -> None:
+        if self.github_issues is None:
+            return
+        try:
+            self.github_issues.sync()
+        except GitHubIssueError as error:
+            raise InfrastructureFailure(str(error)) from error
+
+    def validate_issue_source(self) -> None:
+        """Validate GitHub intake without changing persistent recovery state."""
+
+        if self.github_issues is None:
+            return
+        with tempfile.TemporaryDirectory(prefix="ralf-github-validate-") as scratch:
+            try:
+                self.github_issues.snapshot(Path(scratch))
+            except GitHubIssueError as error:
+                raise InfrastructureFailure(str(error)) from error
 
     def _issue_path(self, number: int) -> Path:
         for path in issue_files(self.issue_directory):
@@ -113,7 +139,9 @@ class Workflow:
         return self.worktrees / f"issue-{number}"
 
     def _protected_roots(self) -> tuple[str, ...]:
-        return (self.settings.issue_directory, "ralf.toml")
+        if self.local:
+            return (self.settings.issue_directory, "ralf.toml")
+        return ("ralf.toml",)
 
     def _agent_policy(self) -> SandboxPolicy:
         mounts = [Mount(path) for path in self.harness.read_only_mounts]
@@ -146,6 +174,19 @@ class Workflow:
         attempts: int,
         message: str,
     ) -> None:
+        if self.github_issues is not None:
+            try:
+                self.github_issues.write_status(
+                    path,
+                    status=status,
+                    branch=branch,
+                    attempts=attempts,
+                )
+            except GitHubIssueError as error:
+                raise InfrastructureFailure(
+                    f"could not record GitHub issue state for {path.name}: {error}"
+                ) from error
+            return
         write_issue_status(path, status=status, branch=branch, attempts=attempts)
         try:
             self.repository.stage_all()
@@ -475,24 +516,42 @@ class Workflow:
     # -- run --------------------------------------------------------------
 
     def plan(self, *, fetch: bool = False) -> RunPlan:
+        if self.github_issues is not None:
+            with tempfile.TemporaryDirectory(prefix="ralf-github-plan-") as scratch:
+                directory = Path(scratch)
+                try:
+                    self.github_issues.snapshot(directory)
+                except GitHubIssueError as error:
+                    raise InfrastructureFailure(str(error)) from error
+                return build_plan(
+                    self.settings,
+                    self.repository,
+                    no_sandbox=self.no_sandbox,
+                    remote=self.remote,
+                    fetch=fetch,
+                    issue_directory=directory,
+                )
         return build_plan(
             self.settings,
             self.repository,
             no_sandbox=self.no_sandbox,
             remote=self.remote,
             fetch=fetch,
+            issue_directory=self.issue_directory,
         )
 
     def run(self) -> int:
         self.telemetry.cleanup()
         run_id = new_run_id()
         with RepositoryLock(self.repository):
+            self.refresh_issues()
             plan = build_plan(
                 self.settings,
                 self.repository,
                 no_sandbox=self.no_sandbox,
                 remote=self.remote,
                 fetch=True,
+                issue_directory=self.issue_directory,
             )
             self.telemetry.record(
                 "run_start",
@@ -539,6 +598,7 @@ class Workflow:
     def retry_issue(self, number: int) -> int:
         run_id = new_run_id()
         with RepositoryLock(self.repository):
+            self.refresh_issues()
             status = self.resume(number, run_id)
             if status is IssueStatus.READY and self.auto_merge:
                 self.finalize(number, run_id)
@@ -547,6 +607,7 @@ class Workflow:
     def finalize_issue(self, number: int) -> int:
         run_id = new_run_id()
         with RepositoryLock(self.repository):
+            self.refresh_issues()
             self.finalize(number, run_id)
         return 0
 
@@ -578,6 +639,7 @@ class Workflow:
     # -- status -----------------------------------------------------------
 
     def status(self) -> dict[str, object]:
+        self.refresh_issues()
         issues: list[dict[str, object]] = []
         for path in issue_files(self.issue_directory):
             issue = load_issue(path)
@@ -591,6 +653,7 @@ class Workflow:
                 }
             )
         return {
+            "issue_source": "local" if self.local else "github",
             "target_branch": self.settings.target_branch,
             "issues": issues,
             "worktrees": [

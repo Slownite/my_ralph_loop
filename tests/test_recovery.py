@@ -35,7 +35,7 @@ def _start_run(project: Project) -> subprocess.Popen[str]:
     environment = os.environ.copy()
     environment["XDG_STATE_HOME"] = str(project.state)
     return subprocess.Popen(
-        ["ralf-loop", "run", "--no-sandbox"],
+        ["ralf-loop", "run", "--local", "--no-sandbox"],
         cwd=project.root,
         env=environment,
         stdout=subprocess.PIPE,
